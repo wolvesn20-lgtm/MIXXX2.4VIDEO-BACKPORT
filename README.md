@@ -6,4 +6,4 @@ This project contains a video-feature backport and related modifications for Mix
 
 Mixxx is licensed under the GNU General Public License, version 2 or later (GPL-2.0-or-later).
 
-See [`source/LICENSE`](source/LICENSE) for the full license and third-party licensing information. The backport changes in this repository are distributed under the applicable Mixxx licensing terms.for the full license and third-party licensing information. The backport changes in this repository are distributed under the applicable Mixxx licensing terms.# MIXXX2.4VIDEO-BACKPORPT.
+See [`source/LICENSE`](source/LICENSE) for the full license and third-party licensing information. The backport changes in this repository are distributed under the applicable Mixxx licensing terms.
