@@ -1,3 +1,9 @@
 # MIXXX2.4VIDEO-BACKPORT
 ## License
-This project is licensed under the MIT License. See the LICENSE file for details.
+
+This project is a backport and modification of Mixxx 2.4.2.
+
+Mixxx is licensed under the GNU General Public License, version 2 or later.
+See `source/LICENSE` for the full license and third-party licensing information.
+
+The video-backport changes are intended to remain under the applicable Mixxx/GPL licensing terms.
