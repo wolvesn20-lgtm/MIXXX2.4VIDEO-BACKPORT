@@ -29,11 +29,13 @@ jobs:
 
     - name: Configure CMake Project for High Sierra
       run: |
-        echo "Directing CMake to look inside the nested source folder..."
-        # UPDATED: Changed source target from '.' to 'source' to match your repository layout
+        echo "Configuring project and disabling unit tests..."
+        # UPDATED: Added -DTESTING=OFF (or -DBUILD_TESTING=OFF) to skip the GTest requirement entirely
         cmake -B build -S source \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+          -DTESTING=OFF \
+          -DBUILD_TESTING=OFF \
           -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake"
 
     - name: Compile and Build Application
@@ -46,7 +48,3 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
-
-
-
-         
