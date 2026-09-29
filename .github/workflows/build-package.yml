@@ -1,60 +1,25 @@
-
+    - name: Install Google Test Dependency
+      run: |
+        brew install googletest
 
     - name: Configure CMake Project for High Sierra
-
       run: |
-
-
-        echo "Configuring project and disabling unit tests..."
-
-
-        # UPDATED: Added -DTESTING=OFF (or -DBUILD_TESTING=OFF) to skip the GTest requirement entirely
-
-
+        echo "Configuring project cleanly..."
         cmake -B build -S source \
-
-
           -DCMAKE_BUILD_TYPE=Release \
-
-
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-
-
           -DTESTING=OFF \
-
-
           -DBUILD_TESTING=OFF \
-
-
           -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake"
 
-
-        echo "Configuring project cleanly..."
-
-
-        # One clean continuous line block to prevent syntax breakage
-
-
-        cmake -B build -S source -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 -DTESTING=OFF -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake"
-
-
-
     - name: Compile and Build Application
-
       run: |
-
         cmake --build build --config Release --parallel 4
 
-
-
     - name: Package and Upload Completed Artifact
-
       uses: actions/upload-artifact@v4
-
       with:
-
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
-
         path: build/
-
         retention-days: 7
+
