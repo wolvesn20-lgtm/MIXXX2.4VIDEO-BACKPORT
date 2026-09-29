@@ -29,7 +29,10 @@ jobs:
 
     - name: Configure CMake Project for High Sierra
       run: |
-        cmake -B build -S MIXXX2.4VIDEO-BACKPORT \
+        echo "Current workspace directory is: $PWD"
+        ls -la
+        # Target the flat root folder (.) to clear the directory nesting error
+        cmake -B build -S . \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
           -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake"
@@ -44,5 +47,6 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
 
          
