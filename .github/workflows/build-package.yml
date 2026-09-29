@@ -20,13 +20,13 @@ jobs:
         brew install ffmpeg pkg-config
 
     - name: Set Up Qt5 Environment
-      uses: jurplel/install-qt-action@v3
+      # UPGRADED: Switched from v3 to v4 to fix the python execution failure
+      uses: jurplel/install-qt-action@v4
       with:
         version: '5.15.2'
         host: 'mac'
         target: 'desktop'
         dir: '${{ github.workspace }}/qt'
-        setup-python: 'false'
 
     - name: Configure CMake Project for High Sierra
       run: |
@@ -45,4 +45,4 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
-            
+         
