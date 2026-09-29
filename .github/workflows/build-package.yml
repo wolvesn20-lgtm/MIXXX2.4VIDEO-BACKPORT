@@ -1,25 +1,41 @@
-    - name: Install Google Test Dependency
-      run: |
-        brew install googletest
+name: Build Mixxx High Sierra Backport
 
-    - name: Configure CMake Project for High Sierra
-      run: |
-        echo "Configuring project cleanly..."
-        cmake -B build -S source \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-          -DTESTING=OFF \
-          -DBUILD_TESTING=OFF \
-          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake"
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
 
-    - name: Compile and Build Application
-      run: |
-        cmake --build build --config Release --parallel 4
+jobs:
+  build-macos-intel:
+    runs-on: macos-13
+    
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Package and Upload Completed Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: MIXXX2.4-VIDEO-BACKPORT-BUILD
-        path: build/
-        retention-days: 7
+      - name: Install Google Test Dependency
+        run: |
+          brew install googletest
 
+      - name: Configure CMake Project for High Sierra
+        run: |
+          echo "Configuring project cleanly..."
+          cmake -B build -S source \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DTESTING=OFF \
+            -DBUILD_TESTING=OFF \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake"
+
+      - name: Compile and Build Application
+        run: |
+          cmake --build build --config Release --parallel 4
+
+      - name: Package and Upload Completed Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIXXX2.4-VIDEO-BACKPORT-BUILD
+          path: build/
+          retention-days: 7
