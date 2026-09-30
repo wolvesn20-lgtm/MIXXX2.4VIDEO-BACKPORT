@@ -2,51 +2,35 @@ name: CMake Cloud Build and Package Pipeline
 
 on:
   push:
-    branches: [ main, master ]
-  workflow_dispatch:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
 
 jobs:
   build-macos-intel:
-    runs-on: macos-15-intel
+    runs-on: macos-13
 
     steps:
-    - name: Checkout Repository Code
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Install All Core Mixxx Dependencies
-      run: |
-        echo "Installing core libraries, codecs, and final framework dependencies..."
-        # UPDATED: Appended rubberband cleanly to the end of the brew installation chain
-        brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch taglib portaudio hidapi portmidi protobuf rubberband pkg-config
+      - name: Install System Dependencies via Homebrew
+        run: |
+          brew update
+          # Install taglib@1 explicitly to avoid version 2.0+ conflicts
+          brew install portmidi chromaprint libebur128 libkeyfinder flac portaudio libogg libvorbis rubberband sound-touch taglib@1
+          
+          # Force Homebrew to link and prioritize taglib@1 paths
+          brew link --overwrite --force taglib@1
 
-    - name: Set Up Qt5 Environment
-      uses: jurplel/install-qt-action@v4
-      with:
-        version: '5.15.2'
-        host: 'mac'
-        target: 'desktop'
-        dir: '${{ github.workspace }}/qt'
+      - name: Configure CMake Project for High Sierra
+        run: |
+          mkdir -p build
+          cmake -B build \
+            -DCMAKE_PREFIX_PATH="/usr/local/opt/taglib@1;/usr/local" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DOPTIMIZATION=portable
 
-    - name: Configure CMake Project for High Sierra
-      run: |
-        echo "Configuring project with all structural libraries present..."
-        cmake -B build -S source \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-          -DTESTING=OFF \
-          -DBUILD_TESTING=OFF \
-          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake"
-
-    - name: Compile and Build Application
-      run: |
-        cmake --build build --config Release --parallel 4
-
-    - name: Package and Upload Completed Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: MIXXX2.4-VIDEO-BACKPORT-BUILD
-        path: build/
-        retention-days: 7
-
+      - name: Compile and Build Application
+        run: |
+          cmake --build build --config Release
