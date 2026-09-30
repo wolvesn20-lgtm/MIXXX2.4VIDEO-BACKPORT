@@ -1,57 +1,52 @@
-30s
-Run echo "Configuring project with all structural libraries present..."
-Configuring project with all structural libraries present...
--- CMAKE_VERSION: 4.4.2
--- The C compiler identification is AppleClang 17.0.0.17000013
--- The CXX compiler identification is AppleClang 17.0.0.17000013
--- Detecting C compiler ABI info
--- Detecting C compiler ABI info - done
--- Check for working C compiler: /usr/bin/cc - skipped
--- Detecting C compile features
--- Detecting C compile features - done
--- Detecting CXX compiler ABI info
--- Detecting CXX compiler ABI info - done
--- Check for working CXX compiler: /usr/bin/c++ - skipped
--- Detecting CXX compile features
--- Detecting CXX compile features - done
--- Optimization level: portable
--- Enabling SSE2 CPU optimizations (>= Pentium 4)
--- Could NOT find ccache (missing executable)
--- Support for ccache: OFF
--- The OBJC compiler identification is AppleClang 17.0.0.17000013
--- The OBJCXX compiler identification is AppleClang 17.0.0.17000013
--- Detecting OBJC compiler ABI info
--- Detecting OBJC compiler ABI info - done
--- Check for working OBJC compiler: /usr/bin/cc - skipped
--- Detecting OBJCXX compiler ABI info
--- Detecting OBJCXX compiler ABI info - done
--- Check for working OBJCXX compiler: /usr/bin/c++ - skipped
--- Performing Test CMAKE_HAVE_LIBC_PTHREAD
--- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
--- Found Threads: TRUE
--- Found Chromaprint: /usr/local/Cellar/chromaprint/1.6.1_1/lib/libchromaprint.dylib (found version "1.6.1")
--- Found SQLite3: /Applications/Xcode_16.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib/libsqlite3.tbd (found version "3.43.2")
--- Could NOT find DjInterop (missing: DjInterop_DIR)
--- Could NOT find DjInterop (missing: DjInterop_LIBRARY DjInterop_INCLUDE_DIR DjInterop_VERSION) (Required is exact version "0.22.1")
--- Building libdjinterop sources (with embedded SQLite) fetched from GitHub
--- Found ZLIB: /Applications/Xcode_16.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/lib/libz.tbd (found suitable version "1.2.12", minimum required is "1.2.8")
--- Found Ebur128: /usr/local/Cellar/libebur128/1.2.6/lib/libebur128.dylib (found version "1.2.6")
--- Found KeyFinder: /usr/local/Cellar/libkeyfinder/2.2.8/lib/libkeyfinder.dylib (found suitable version "2.2.8", minimum required is "2.2.4")
--- Found FLAC: /usr/local/Cellar/flac/1.5.0/lib/libFLAC.dylib (found version "1.5.0")
--- Found mp3lame: /usr/local/lib/libmp3lame.dylib
--- Found OpenGL: /Applications/Xcode_16.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/Frameworks/OpenGL.framework
--- Found Ogg: /usr/local/Cellar/libogg/1.3.6/lib/libogg.dylib (found version "1.3.6")
--- Found Vorbis: /usr/local/include  found components: vorbis vorbisenc vorbisfile
--- Found PortAudio: /usr/local/Cellar/portaudio/19.7.0/lib/libportaudio.dylib (found version "19")
--- Found PortMidi: /usr/local/lib/libportmidi.dylib
-CMake Error at /usr/local/share/cmake/Modules/FindPackageHandleStandardArgs.cmake:290 (message):
--- Configuring incomplete, errors occurred!
-  Could NOT find rubberband (missing: rubberband_LIBRARY
-  rubberband_INCLUDE_DIR)
-Call Stack (most recent call first):
-  /usr/local/share/cmake/Modules/FindPackageHandleStandardArgs.cmake:654 (_FPHSA_FAILURE_MESSAGE)
-  cmake/modules/Findrubberband.cmake:69 (find_package_handle_standard_args)
-  CMakeLists.txt:2930 (find_package)
+name: CMake Cloud Build and Package Pipeline
 
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
 
-Error: Process completed with exit code 1.
+jobs:
+  build-macos-intel:
+    runs-on: macos-15-intel
+
+    steps:
+    - name: Checkout Repository Code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install All Core Mixxx Dependencies
+      run: |
+        echo "Installing core libraries, codecs, and final framework dependencies..."
+        # UPDATED: Appended rubberband cleanly to the end of the brew installation chain
+        brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch taglib portaudio hidapi portmidi protobuf rubberband pkg-config
+
+    - name: Set Up Qt5 Environment
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '5.15.2'
+        host: 'mac'
+        target: 'desktop'
+        dir: '${{ github.workspace }}/qt'
+
+    - name: Configure CMake Project for High Sierra
+      run: |
+        echo "Configuring project with all structural libraries present..."
+        cmake -B build -S source \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+          -DTESTING=OFF \
+          -DBUILD_TESTING=OFF \
+          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake"
+
+    - name: Compile and Build Application
+      run: |
+        cmake --build build --config Release --parallel 4
+
+    - name: Package and Upload Completed Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: MIXXX2.4-VIDEO-BACKPORT-BUILD
+        path: build/
+        retention-days: 7
+
