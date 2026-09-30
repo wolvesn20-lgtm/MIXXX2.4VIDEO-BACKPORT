@@ -1,10 +1,12 @@
+      - name: Reset Cache Directory
+        run: rm -rf build/ CMakeCache.txt CMakeFiles/
 name: CMake Cloud Build and Package Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "**" ]  # This forces the build to trigger on EVERY branch push
   pull_request:
-    branches: [ "main" ]
+    branches: [ "**" ]
 
 jobs:
   build-macos-intel:
@@ -17,7 +19,6 @@ jobs:
       - name: Install System Dependencies via Homebrew
         run: |
           brew update
-          # Install portmidi explicitly along with other Mixxx dependencies
           brew install portmidi chromaprint libebur128 libkeyfinder flac portaudio libogg libvorbis
 
       - name: Configure CMake Project
@@ -31,12 +32,3 @@ jobs:
       - name: Build Project
         run: |
           cmake --build build --config Release
-
-
-
-
-
-
-
-
-
