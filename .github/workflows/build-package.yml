@@ -1,5 +1,3 @@
-      - name: Reset Cache Directory
-        run: rm -rf build/ CMakeCache.txt CMakeFiles/
 name: CMake Cloud Build and Package Pipeline
 
 on:
