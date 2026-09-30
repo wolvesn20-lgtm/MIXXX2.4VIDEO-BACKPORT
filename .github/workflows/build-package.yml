@@ -15,11 +15,11 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install FFmpeg, GTest, Chromaprint, Ebur128, FFTW, KeyFinder, and Build Prerequisites
+    - name: Install FFmpeg, Audio Formats, and Build Prerequisites
       run: |
-        echo "Installing core libraries and audio framework dependencies..."
-        # FIX: Ensure fftw and libkeyfinder are present in the list below
-        brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder pkg-config
+        echo "Installing core libraries, audio formats, and framework dependencies..."
+        # UPDATED: Added flac right to the package installation recipe
+        brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac pkg-config
 
     - name: Set Up Qt5 Environment
       uses: jurplel/install-qt-action@v4
@@ -49,6 +49,7 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
 
 
 
