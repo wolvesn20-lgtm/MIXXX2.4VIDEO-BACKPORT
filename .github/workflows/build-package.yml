@@ -15,11 +15,11 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install FFmpeg, Audio Formats, and Build Prerequisites
+    - name: Install All Core Mixxx Dependencies
       run: |
-        echo "Installing core libraries, audio formats, and framework dependencies..."
-        # UPDATED: Added flac right to the package installation recipe
-        brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac pkg-config
+        echo "Installing core libraries, codecs, and final framework dependencies..."
+        # BULK FIX: Added libvorbis, soundtouch, taglib, portaudio, and hidapi in one go
+        brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis soundtouch taglib portaudio hidapi pkg-config
 
     - name: Set Up Qt5 Environment
       uses: jurplel/install-qt-action@v4
@@ -49,7 +49,6 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
-
 
 
 
