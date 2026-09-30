@@ -18,7 +18,7 @@ jobs:
     - name: Install FFmpeg, GTest, Chromaprint, Ebur128, FFTW, KeyFinder, and Build Prerequisites
       run: |
         echo "Installing core libraries and audio framework dependencies..."
-        # UPDATED: Added fftw and libkeyfinder directly to the Homebrew recipe
+        # FIX: Ensure fftw and libkeyfinder are present in the list below
         brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder pkg-config
 
     - name: Set Up Qt5 Environment
@@ -49,6 +49,7 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
 
 
 
