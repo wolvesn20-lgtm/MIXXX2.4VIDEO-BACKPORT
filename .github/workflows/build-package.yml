@@ -15,11 +15,11 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install FFmpeg, GTest, and Build Prerequisites
+    - name: Install FFmpeg, GTest, Chromaprint, and Build Prerequisites
       run: |
-        echo "Installing FFmpeg and Google Test package flags..."
-        # UPDATED: Added gtest directly to the brew install line
-        brew install ffmpeg googletest pkg-config
+        echo "Installing core libraries, Chromaprint, and Benchmark dependencies..."
+        # UPDATED: Added chromaprint and google-benchmark to the Homebrew setup line
+        brew install ffmpeg googletest chromaprint google-benchmark pkg-config
 
     - name: Set Up Qt5 Environment
       uses: jurplel/install-qt-action@v4
@@ -49,5 +49,6 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
 
 
