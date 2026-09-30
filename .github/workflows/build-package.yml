@@ -18,7 +18,6 @@ jobs:
     - name: Install All Core Mixxx Dependencies
       run: |
         echo "Installing core libraries, codecs, and final framework dependencies..."
-        # FIXED: Changed "soundtouch" to "sound-touch" to match the official Homebrew name
         brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch taglib portaudio hidapi pkg-config
 
     - name: Set Up Qt5 Environment
@@ -49,6 +48,7 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
 
 
 
