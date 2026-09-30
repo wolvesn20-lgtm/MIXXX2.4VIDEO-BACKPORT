@@ -1,51 +1,47 @@
-name: Mixxx 2.4 Backport Build & Package
+
+name: CMake Cloud Build and Package Pipeline
 
 on:
   push:
-    branches:
-      - '2.4'
-      - 'backport-2.4'
-  pull_request:
-    branches:
-      - '2.4'
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
-  build-linux:
-    name: Build & Package (Ubuntu Linux)
-    runs-on: ubuntu-22.04
+  build-macos-intel:
+    runs-on: macos-15-intel
 
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
+    - name: Checkout Repository Code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          # Call the internal dependencies script if present in your 2.4 tree
-          if [ -f tools/debian_buildenv.sh ]; then
-            sudo bash tools/debian_buildenv.sh
-          else
-            sudo apt-get install -y build-essential cmake git libqt5svg5-dev libqt5sql5-sqlite qtscript5-dev
-          fi
+    - name: Install FFmpeg and Build Prerequisites
+      run: |
+        brew install ffmpeg pkg-config
 
-      - name: Configure CMake
-        run: |
-          cmake -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_INSTALL_PREFIX=/usr/local \
-                -S . -B build
+    - name: Set Up Qt5 Environment
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '5.15.2'
+        host: 'mac'
+        target: 'desktop'
+        dir: '${{ github.workspace }}/qt'
 
-      - name: Compile Mixxx Binary
-        run: |
-          cmake --build build --parallel $(nproc)
+    - name: Configure CMake Project for High Sierra
+      run: |
+        echo "Configuring project cleanly..."
+        # One clean continuous line block to prevent syntax breakage
+        cmake -B build -S source -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 -DTESTING=OFF -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake"
 
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mixxx-2.4-linux-build
-          path: build/mixxx
+    - name: Compile and Build Application
+      run: |
+        cmake --build build --config Release --parallel 4
 
-
+    - name: Package and Upload Completed Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: MIXXX2.4-VIDEO-BACKPORT-BUILD
+        path: build/
+        retention-days: 7
 
