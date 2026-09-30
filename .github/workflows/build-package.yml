@@ -1,4 +1,3 @@
-
 name: CMake Cloud Build and Package Pipeline
 
 on:
@@ -16,9 +15,11 @@ jobs:
       with:
         submodules: recursive
 
-    - name: Install FFmpeg and Build Prerequisites
+    - name: Install FFmpeg, GTest, and Build Prerequisites
       run: |
-        brew install ffmpeg pkg-config
+        echo "Installing FFmpeg and Google Test package flags..."
+        # UPDATED: Added gtest directly to the brew install line
+        brew install ffmpeg googletest pkg-config
 
     - name: Set Up Qt5 Environment
       uses: jurplel/install-qt-action@v4
@@ -30,9 +31,13 @@ jobs:
 
     - name: Configure CMake Project for High Sierra
       run: |
-        echo "Configuring project cleanly..."
-        # One clean continuous line block to prevent syntax breakage
-        cmake -B build -S source -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 -DTESTING=OFF -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake"
+        echo "Configuring project with all structural libraries present..."
+        cmake -B build -S source \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+          -DTESTING=OFF \
+          -DBUILD_TESTING=OFF \
+          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake"
 
     - name: Compile and Build Application
       run: |
@@ -44,4 +49,5 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
 
