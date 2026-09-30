@@ -1,43 +1,51 @@
-name: Build Mixxx High Sierra Backport
+name: Mixxx 2.4 Backport Build & Package
 
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - '2.4'
+      - 'backport-2.4'
+  pull_request:
+    branches:
+      - '2.4'
   workflow_dispatch:
 
 jobs:
-  build-macos-intel:
-    runs-on: macos-13
-    
+  build-linux:
+    name: Build & Package (Ubuntu Linux)
+    runs-on: ubuntu-22.04
+
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Install Google Test Dependency
+      - name: Install System Dependencies
         run: |
-          brew install googletest
+          sudo apt-get update
+          # Call the internal dependencies script if present in your 2.4 tree
+          if [ -f tools/debian_buildenv.sh ]; then
+            sudo bash tools/debian_buildenv.sh
+          else
+            sudo apt-get install -y build-essential cmake git libqt5svg5-dev libqt5sql5-sqlite qtscript5-dev
+          fi
 
-      - name: Configure CMake Project for High Sierra
+      - name: Configure CMake
         run: |
-          echo "Configuring project cleanly..."
-          cmake -B build -S source \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DTESTING=OFF \
-            -DBUILD_TESTING=OFF \
-            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake"
+          cmake -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_PREFIX=/usr/local \
+                -S . -B build
 
-      - name: Compile and Build Application
+      - name: Compile Mixxx Binary
         run: |
-          cmake --build build --config Release --parallel 4
+          cmake --build build --parallel $(nproc)
 
-      - name: Package and Upload Completed Artifact
+      - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MIXXX2.4-VIDEO-BACKPORT-BUILD
-          path: build/
-          retention-days: 7
+          name: mixxx-2.4-linux-build
+          path: build/mixxx
+
 
 
