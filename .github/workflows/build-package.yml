@@ -18,8 +18,8 @@ jobs:
     - name: Install All Core Mixxx Dependencies
       run: |
         echo "Installing core libraries, codecs, and final framework dependencies..."
-        # UPDATED: Appended portmidi cleanly to the end of the brew installation chain
-        brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch taglib portaudio hidapi portmidi pkg-config
+        # UPDATED: Appended protobuf cleanly to the end of the brew installation chain
+        brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch taglib portaudio hidapi portmidi protobuf pkg-config
 
     - name: Set Up Qt5 Environment
       uses: jurplel/install-qt-action@v4
@@ -49,4 +49,3 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
-
