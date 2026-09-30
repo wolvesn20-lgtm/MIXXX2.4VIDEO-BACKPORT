@@ -2,31 +2,50 @@ name: CMake Cloud Build and Package Pipeline
 
 on:
   push:
-    branches: [ "**" ]  # This forces the build to trigger on EVERY branch push
-  pull_request:
-    branches: [ "**" ]
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build-macos-intel:
-    runs-on: macos-13
+    runs-on: macos-15-intel
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout Repository Code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
-      - name: Install System Dependencies via Homebrew
-        run: |
-          brew update
-          brew install portmidi chromaprint libebur128 libkeyfinder flac portaudio libogg libvorbis
+    - name: Install All Core Mixxx Dependencies
+      run: |
+        echo "Installing core libraries, codecs, and final framework dependencies..."
+        brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch taglib portaudio hidapi pkg-config
 
-      - name: Configure CMake Project
-        run: |
-          mkdir -p build
-          cmake -B build \
-            -DCMAKE_PREFIX_PATH="/usr/local" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DOPTIMIZATION=portable
+    - name: Set Up Qt5 Environment
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '5.15.2'
+        host: 'mac'
+        target: 'desktop'
+        dir: '${{ github.workspace }}/qt'
 
-      - name: Build Project
-        run: |
-          cmake --build build --config Release
+    - name: Configure CMake Project for High Sierra
+      run: |
+        echo "Configuring project with all structural libraries present..."
+        cmake -B build -S source \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+          -DTESTING=OFF \
+          -DBUILD_TESTING=OFF \
+          -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR/lib/cmake"
+
+    - name: Compile and Build Application
+      run: |
+        cmake --build build --config Release --parallel 4
+
+    - name: Package and Upload Completed Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: MIXXX2.4-VIDEO-BACKPORT-BUILD
+        path: build/
+        retention-days: 7
+
