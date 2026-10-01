@@ -31,10 +31,9 @@ jobs:
     - name: Compile Legacy TagLib 1.11.1 from Source
       run: |
         echo "Building legacy TagLib 1.x branch to satisfy Mixxx 2.4 targets..."
-        # FIXED: Switched to the direct GitHub release download channel to bypass server firewalls
-        curl -L https://github.com -o taglib.tar.gz
-        tar -xzf taglib.tar.gz
-        # The unpacked directory matches GitHub's tag layout name
+        # FIXED: Pulling the explicit .zip distribution and using native unzip extraction tools
+        curl -L https://github.com -o taglib.zip
+        unzip -q taglib.zip
         cd taglib-1.11.1
         cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/taglib_local
         cmake --build build --parallel 4
@@ -60,5 +59,3 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
-
-
