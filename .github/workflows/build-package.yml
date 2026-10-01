@@ -1,4 +1,3 @@
-
 name: CMake Cloud Build and Package Pipeline
 
 on:
@@ -22,11 +21,19 @@ jobs:
         echo "Installing core libraries and frameworks..."
         brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch portaudio hidapi portmidi protobuf rubberband boost pkg-config
         
-        echo "Fetching stable legacy TagLib 1.13 formula..."
-        # FIXED: Explicitly added the missing "raw." subdomain prefix at the front
-        curl -fsSL "https://githubusercontent.com" -o taglib.rb
+        echo "Extracting legacy TagLib 1.13 from local Homebrew Git history..."
+        # Navigate to the local homebrew repository clone on the runner
+        BREW_CORE_DIR=$(brew --repository homebrew/core)
+        cd "$BREW_CORE_DIR"
         
-        echo "Installing TagLib 1.x package..."
+        # Unshallow if it's a shallow clone, so we can access past commits safely
+        git fetch --unshallow || true
+        
+        # Extract the exact version of the taglib recipe before the v2.0 upgrade
+        git show fb8325c3451559ed8be4be356396f9ec6798e983:Formula/t/taglib.rb > ${{ github.workspace }}/taglib.rb
+        
+        cd ${{ github.workspace }}
+        echo "Installing legacy TagLib 1.x locally..."
         brew install --formula ./taglib.rb
 
     - name: Set Up Qt5 Environment
@@ -57,5 +64,3 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
-
-
