@@ -33,7 +33,8 @@ jobs:
       run: |
         echo "Fetching standalone legacy Intel package..."
         mkdir -p ${{ github.workspace }}/taglib_local
-        curl -L https://ghcr.io -o taglib_bottle.tar.gz
+        # Utilizing the exact archive source location to bypass unrecognized format errors
+        curl -L "https://github.com" -o taglib_bottle.tar.gz
         tar -xzf taglib_bottle.tar.gz --strip-components 2 -C ${{ github.workspace }}/taglib_local
 
     - name: Configure CMake Project for High Sierra
@@ -56,4 +57,5 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
 
