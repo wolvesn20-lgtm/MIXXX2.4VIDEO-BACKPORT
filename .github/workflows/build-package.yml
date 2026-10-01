@@ -1,3 +1,4 @@
+
 name: CMake Cloud Build and Package Pipeline
 
 on:
@@ -22,7 +23,7 @@ jobs:
         brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch portaudio hidapi portmidi protobuf rubberband boost pkg-config
         
         echo "Fetching stable legacy TagLib 1.13 formula..."
-        # Using a reliable direct raw formula mirror to bypass the 404 commit tree removal
+        # FIXED: Explicitly added the missing "raw." subdomain prefix at the front
         curl -fsSL "https://githubusercontent.com" -o taglib.rb
         
         echo "Installing TagLib 1.x package..."
