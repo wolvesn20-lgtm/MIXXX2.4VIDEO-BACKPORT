@@ -19,7 +19,7 @@ jobs:
     - name: Install All Core Mixxx Dependencies
       run: |
         echo "Installing core libraries and frameworks..."
-        # We explicitly omit taglib here so Homebrew does not pull the broken 2.3.1 version
+        # We explicitly omit taglib here to prevent homebrew from forcing v2.3.1
         brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch portaudio hidapi portmidi protobuf rubberband boost pkg-config
 
     - name: Set Up Qt5 Environment
@@ -30,36 +30,23 @@ jobs:
         target: 'desktop'
         dir: '${{ github.workspace }}/qt'
 
+    - name: Set Up Legacy TagLib 1.11.1 Precompiled Binary
+      run: |
+        echo "Fetching stable precompiled legacy Intel package..."
+        mkdir -p ${{ github.workspace }}/taglib_local
+        # Pulling the official precompiled Homebrew bottle directly from their archive mirrors
+        curl -L "https://ghcr.io" -o taglib_bottle.tar.gz
+        tar -xzf taglib_bottle.tar.gz --strip-components 2 -C ${{ github.workspace }}/taglib_local
+
     - name: Configure CMake Project for High Sierra
       run: |
-        echo "Injecting clean TagLib 1.11.1 FetchContent fallback..."
-        
-        # We append a FetchContent block to the top of Mixxx's root CMakeLists.txt.
-        # This forces CMake to cleanly clone and build a localized legacy TagLib 1.11.1 static target,
-        # completely sidestepping the global runner's environment restrictions.
-        cat << 'EOF' > patch.txt
-        include(FetchContent)
-        FetchContent_Declare(
-          TagLib
-          URL https://github.com
-          URL_HASH SHA256=16b0c53a68aa17a589045749af991034079feb29a68d30cbd2f949c336dbed9b
-        )
-        FetchContent_MakeAvailable(TagLib)
-        set(TagLib_FOUND TRUE)
-        set(TagLib_LIBRARIES tag)
-        set(TagLib_INCLUDE_DIRS ${taglib_BINARY_DIR} ${source_repo_SOURCE_DIR}/source_repo/source)
-        EOF
-        
-        cat patch.txt source_repo/source/CMakeLists.txt > CMakeLists.txt.patched
-        mv CMakeLists.txt.patched source_repo/source/CMakeLists.txt
-
         echo "Configuring main project tracking path mappings..."
         cmake -B build -S source_repo/source \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
           -DTESTING=OFF \
           -DBUILD_TESTING=OFF \
-          -DCMAKE_PREFIX_PATH="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib/cmake"
+          -DCMAKE_PREFIX_PATH="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib/cmake;${{ github.workspace }}/taglib_local"
 
     - name: Compile and Build Application
       run: |
