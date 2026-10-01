@@ -17,7 +17,6 @@ jobs:
         path: source_repo
 
     - name: Checkout Legacy TagLib 1.11.1
-      # FIXED: Using the official GitHub Actions downloader to pull the legacy tag cleanly
       uses: actions/checkout@v4
       with:
         repository: taglib/taglib
@@ -41,7 +40,11 @@ jobs:
       run: |
         echo "Building legacy TagLib 1.x branch..."
         cd taglib_src
-        cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/taglib_local
+        # UPDATED: Added -DCMAKE_POLICY_VERSION_MINIMUM=3.5 to bypass the legacy policy enforcement restriction
+        cmake -B build -S . \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/taglib_local
         cmake --build build --parallel 4
         cmake --install build
 
@@ -65,4 +68,5 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
 
