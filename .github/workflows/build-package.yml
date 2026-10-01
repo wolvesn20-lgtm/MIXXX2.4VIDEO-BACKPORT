@@ -2,7 +2,9 @@ name: CMake Cloud Build and Package Pipeline
 
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
 jobs:
@@ -10,58 +12,146 @@ jobs:
     runs-on: macos-15-intel
 
     steps:
-    - name: Checkout Primary Repository Code
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-        path: source_repo
+      - name: Checkout Primary Repository Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          path: source_repo
 
-    - name: Install All Core Mixxx Dependencies
-      run: |
-        echo "Installing core libraries and frameworks..."
-        # Explicitly omitting taglib here to keep the global workspace unpolluted
-        brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch portaudio hidapi portmidi protobuf rubberband boost pkg-config
+      - name: Install All Core Mixxx Dependencies
+        run: |
+          set -euxo pipefail
 
-    - name: Set Up Qt5 Environment
-      uses: jurplel/install-qt-action@v4
-      with:
-        version: '5.15.2'
-        host: 'mac'
-        target: 'desktop'
-        dir: '${{ github.workspace }}/qt'
+          brew update
 
-    # NEW SECURE APPROACH: Use actions/checkout to pull the clean legacy TagLib repository safely 
-    - name: Clone Legacy TagLib 1.11.1 Source
-      uses: actions/checkout@v4
-      with:
-        repository: taglib/taglib
-        ref: v1.11.1
-        path: taglib_src
+          brew install \
+            ffmpeg \
+            googletest \
+            chromaprint \
+            google-benchmark \
+            libebur128 \
+            fftw \
+            libkeyfinder \
+            flac \
+            libvorbis \
+            sound-touch \
+            portaudio \
+            hidapi \
+            portmidi \
+            protobuf \
+            rubberband \
+            boost \
+            pkg-config
 
-    # Compile TagLib cleanly in its own isolated container to avoid mixing up CMake variables
-    - name: Build Isolated Legacy TagLib Static Target
-      run: |
-        cmake -B taglib_build -S taglib_src \
-  -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-    - name: Configure CMake Project for High Sierra
-      run: |
-        echo "Configuring main project tracking path mappings..."
-        # Directing CMake to find your custom built TagLib binaries in the local workspace directory
-        cmake -B build -S source_repo/source \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-          -DTESTING=OFF \
-          -DBUILD_TESTING=OFF \
-          -DCMAKE_PREFIX_PATH="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib/cmake;${{ github.workspace }}/taglib_build"
+      - name: Set Up Qt5 Environment
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "5.15.2"
+          host: "mac"
+          target: "desktop"
+          dir: "${{ github.workspace }}/qt"
+          setup-python: false
 
-    - name: Compile and Build Application
-      run: |
-        cmake --build build --config Release --parallel 4
+      - name: Clone Legacy TagLib 1.11.1 Source
+        uses: actions/checkout@v4
+        with:
+          repository: taglib/taglib
+          ref: v1.11.1
+          path: taglib_src
 
-    - name: Package and Upload Completed Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: MIXXX2.4-VIDEO-BACKPORT-BUILD
-        path: build/
-        retention-days: 7
+      - name: Configure Legacy TagLib
+        run: |
+          set -euxo pipefail
 
+          cmake \
+            -S taglib_src \
+            -B taglib_build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_TESTS=OFF \
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/taglib_install"
+
+      - name: Build and Install Legacy TagLib
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            --build taglib_build \
+            --config Release \
+            --parallel 4
+
+          cmake \
+            --install taglib_build \
+            --config Release
+
+      - name: Verify Legacy TagLib Installation
+        run: |
+          set -euxo pipefail
+
+          echo "TagLib installation:"
+          find "${{ github.workspace }}/taglib_install" -maxdepth 4 -type f | sort
+
+      - name: Configure Mixxx CMake Project
+        run: |
+          set -euxo pipefail
+
+          QT_PREFIX="${{ github.workspace }}/qt/Qt/5.15.2/macos"
+          TAGLIB_PREFIX="${{ github.workspace }}/taglib_install"
+
+          export PKG_CONFIG_PATH="${TAGLIB_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+
+          cmake \
+            -S source_repo/source \
+            -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DCMAKE_PREFIX_PATH="${QT_PREFIX}/lib/cmake;${TAGLIB_PREFIX}" \
+            -DTESTING=OFF \
+            -DBUILD_TESTING=OFF \
+            -DOPTIMIZE=portable
+
+      - name: Build Mixxx Application
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            --build build \
+            --config Release \
+            --parallel 4
+
+      - name: Create macOS DMG
+        run: |
+          set -euxo pipefail
+
+          cd build
+
+          cpack \
+            -G DragNDrop \
+            -C Release
+
+          echo "Generated packages:"
+          find . -maxdepth 2 -type f \( -name "*.dmg" -o -name "*.pkg" -o -name "*.tar.gz" \) -print
+
+      - name: Verify DMG
+        run: |
+          set -euxo pipefail
+
+          DMG_COUNT=$(find build -type f -name "*.dmg" | wc -l | tr -d ' ')
+
+          if [ "$DMG_COUNT" -eq 0 ]; then
+            echo "ERROR: No DMG was created."
+            exit 1
+          fi
+
+          echo "DMG successfully created:"
+          find build -type f -name "*.dmg" -print
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
+          path: build/*.dmg
+          if-no-files-found: error
+          retention-days: 7
