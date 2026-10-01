@@ -21,8 +21,9 @@ jobs:
         echo "Installing core libraries and frameworks..."
         brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch portaudio hidapi portmidi protobuf rubberband boost pkg-config
         
-        echo "Installing legacy TagLib 1.x branch..."
-        brew install https://githubusercontent.com
+        echo "Fetching and installing legacy TagLib 1.x branch formula..."
+        curl -fsSL https://githubusercontent.com -o taglib.rb
+        brew install --formula ./taglib.rb
 
     - name: Set Up Qt5 Environment
       uses: jurplel/install-qt-action@v4
@@ -52,7 +53,3 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
-
-
-
-
