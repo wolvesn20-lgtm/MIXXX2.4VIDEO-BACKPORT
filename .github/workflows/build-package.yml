@@ -19,7 +19,6 @@ jobs:
     - name: Install All Core Mixxx Dependencies
       run: |
         echo "Installing core libraries and frameworks..."
-        # We explicitly omit taglib here to keep your internal dependencies isolated
         brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch portaudio hidapi portmidi protobuf rubberband boost pkg-config
 
     - name: Set Up Qt5 Environment
@@ -34,15 +33,14 @@ jobs:
       run: |
         echo "Injecting native inline Git-cloned TagLib 1.11.1 instructions..."
         
-        # We write a pure single-line instruction block using Git source mappings.
-        # This bypasses URL downloads entirely and forces a direct branch clone.
+        # Wrapped the repository parameters in strict quote strings to block premature cutting
         cat << 'EOF' > patch.txt
         include(FetchContent)
         set(CMAKE_POLICY_DEFAULT_CMP0022 NEW)
         FetchContent_Declare(
           TagLib
-          GIT_REPOSITORY https://github.com
-          GIT_TAG        v1.11.1
+          GIT_REPOSITORY "https://github.com"
+          GIT_TAG        "v1.11.1"
         )
         FetchContent_MakeAvailable(TagLib)
         set(TagLib_FOUND TRUE)
@@ -71,5 +69,3 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
-
-
