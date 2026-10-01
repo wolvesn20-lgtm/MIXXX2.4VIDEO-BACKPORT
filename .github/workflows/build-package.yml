@@ -18,7 +18,6 @@ jobs:
     - name: Install Core Mixxx Dependencies
       run: |
         echo "Installing core libraries and frameworks..."
-        # NOTE: 'taglib' is intentionally removed from brew so it does not install version 2.x
         brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch portaudio hidapi portmidi protobuf rubberband pkg-config
 
     - name: Set Up Qt5 Environment
@@ -32,8 +31,10 @@ jobs:
     - name: Compile Legacy TagLib 1.11.1 from Source
       run: |
         echo "Building legacy TagLib 1.x branch to satisfy Mixxx 2.4 targets..."
-        curl -L https://taglib.org -o taglib.tar.gz
+        # FIXED: Switched to the direct GitHub release download channel to bypass server firewalls
+        curl -L https://github.com -o taglib.tar.gz
         tar -xzf taglib.tar.gz
+        # The unpacked directory matches GitHub's tag layout name
         cd taglib-1.11.1
         cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/taglib_local
         cmake --build build --parallel 4
@@ -59,4 +60,5 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
 
