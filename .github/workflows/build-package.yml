@@ -42,10 +42,7 @@ jobs:
     - name: Build Isolated Legacy TagLib Static Target
       run: |
         cmake -B taglib_build -S taglib_src \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DBUILD_SHARED_LIBS=OFF
-        cmake --build taglib_build --parallel 4
-
+  -DCMAKE_POLICY_VERSION_MINIMUM=3.5
     - name: Configure CMake Project for High Sierra
       run: |
         echo "Configuring main project tracking path mappings..."
