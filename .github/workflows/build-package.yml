@@ -19,7 +19,7 @@ jobs:
     - name: Install All Core Mixxx Dependencies
       run: |
         echo "Installing core libraries and frameworks..."
-        brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch portaudio hidapi portmidi protobuf rubberband boost pkg-config
+        brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch portaudio hidapi portmidi protobuf rubberband boost pkg-config taglib
 
     - name: Set Up Qt5 Environment
       uses: jurplel/install-qt-action@v4
@@ -29,14 +29,6 @@ jobs:
         target: 'desktop'
         dir: '${{ github.workspace }}/qt'
 
-    - name: Set Up Legacy TagLib 1.11.1 Precompiled Binary
-      run: |
-        echo "Fetching standalone legacy Intel package..."
-        mkdir -p ${{ github.workspace }}/taglib_local
-        # Utilizing the exact archive source location to bypass unrecognized format errors
-        curl -L "https://github.com" -o taglib_bottle.tar.gz
-        tar -xzf taglib_bottle.tar.gz --strip-components 2 -C ${{ github.workspace }}/taglib_local
-
     - name: Configure CMake Project for High Sierra
       run: |
         echo "Configuring main project tracking path mappings..."
@@ -45,7 +37,7 @@ jobs:
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
           -DTESTING=OFF \
           -DBUILD_TESTING=OFF \
-          -DCMAKE_PREFIX_PATH="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib/cmake;${{ github.workspace }}/taglib_local"
+          -DCMAKE_PREFIX_PATH="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib/cmake"
 
     - name: Compile and Build Application
       run: |
@@ -57,5 +49,6 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
 
 
