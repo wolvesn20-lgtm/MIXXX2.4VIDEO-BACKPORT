@@ -16,13 +16,9 @@ jobs:
         submodules: recursive
         path: source_repo
 
-    # UPDATED: We removed the taglib_src checkout block to step over the compilation crashes entirely
-
-     Netz- und Systemabhängigkeiten konfigurieren
     - name: Install All Core Mixxx Dependencies
       run: |
         echo "Installing core libraries and frameworks..."
-        # We fetch the main packages including boost to keep your internal headers satisfied
         brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch portaudio hidapi portmidi protobuf rubberband boost pkg-config
 
     - name: Set Up Qt5 Environment
@@ -33,7 +29,6 @@ jobs:
         target: 'desktop'
         dir: '${{ github.workspace }}/qt'
 
-    # NEW OVERRIDE: Download official precompiled legacy Intel binary directly to skip policy & boost loops
     - name: Set Up Legacy TagLib 1.11.1 Precompiled Binary
       run: |
         echo "Fetching standalone legacy Intel package..."
@@ -61,3 +56,4 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
