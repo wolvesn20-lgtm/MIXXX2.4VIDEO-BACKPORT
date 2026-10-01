@@ -10,10 +10,19 @@ jobs:
     runs-on: macos-15-intel
 
     steps:
-    - name: Checkout Repository Code
+    - name: Checkout Primary Repository Code
       uses: actions/checkout@v4
       with:
         submodules: recursive
+        path: source_repo
+
+    - name: Checkout Legacy TagLib 1.11.1
+      # FIXED: Using the official GitHub Actions downloader to pull the legacy tag cleanly
+      uses: actions/checkout@v4
+      with:
+        repository: taglib/taglib
+        ref: v1.11.1
+        path: taglib_src
 
     - name: Install Core Mixxx Dependencies
       run: |
@@ -30,11 +39,8 @@ jobs:
 
     - name: Compile Legacy TagLib 1.11.1 from Source
       run: |
-        echo "Building legacy TagLib 1.x branch to satisfy Mixxx 2.4 targets..."
-        # FIXED: Pulling the explicit .zip distribution and using native unzip extraction tools
-        curl -L https://github.com -o taglib.zip
-        unzip -q taglib.zip
-        cd taglib-1.11.1
+        echo "Building legacy TagLib 1.x branch..."
+        cd taglib_src
         cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/taglib_local
         cmake --build build --parallel 4
         cmake --install build
@@ -42,7 +48,7 @@ jobs:
     - name: Configure CMake Project for High Sierra
       run: |
         echo "Configuring project pointing to the local legacy TagLib build..."
-        cmake -B build -S source \
+        cmake -B build -S source_repo/source \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
           -DTESTING=OFF \
@@ -59,3 +65,4 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
