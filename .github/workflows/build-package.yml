@@ -19,6 +19,7 @@ jobs:
     - name: Install All Core Mixxx Dependencies
       run: |
         echo "Installing core libraries and frameworks..."
+        # Explicitly omitting taglib here to keep the global workspace unpolluted
         brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch portaudio hidapi portmidi protobuf rubberband boost pkg-config
 
     - name: Set Up Qt5 Environment
@@ -29,35 +30,32 @@ jobs:
         target: 'desktop'
         dir: '${{ github.workspace }}/qt'
 
+    # NEW SECURE APPROACH: Use actions/checkout to pull the clean legacy TagLib repository safely 
+    - name: Clone Legacy TagLib 1.11.1 Source
+      uses: actions/checkout@v4
+      with:
+        repository: taglib/taglib
+        ref: v1.11.1
+        path: taglib_src
+
+    # Compile TagLib cleanly in its own isolated container to avoid mixing up CMake variables
+    - name: Build Isolated Legacy TagLib Static Target
+      run: |
+        cmake -B taglib_build -S taglib_src \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=OFF
+        cmake --build taglib_build --parallel 4
+
     - name: Configure CMake Project for High Sierra
       run: |
-        echo "Injecting native inline Git-cloned TagLib 1.11.1 instructions..."
-        
-        # Wrapped the repository parameters in strict quote strings to block premature cutting
-        cat << 'EOF' > patch.txt
-        include(FetchContent)
-        set(CMAKE_POLICY_DEFAULT_CMP0022 NEW)
-        FetchContent_Declare(
-          TagLib
-          GIT_REPOSITORY "https://github.com"
-          GIT_TAG        "v1.11.1"
-        )
-        FetchContent_MakeAvailable(TagLib)
-        set(TagLib_FOUND TRUE)
-        set(TagLib_LIBRARIES tag)
-        set(TagLib_INCLUDE_DIRS ${taglib_BINARY_DIR} ${source_repo_SOURCE_DIR}/source_repo/source)
-        EOF
-        
-        cat patch.txt source_repo/source/CMakeLists.txt > CMakeLists.txt.patched
-        mv CMakeLists.txt.patched source_repo/source/CMakeLists.txt
-
         echo "Configuring main project tracking path mappings..."
+        # Directing CMake to find your custom built TagLib binaries in the local workspace directory
         cmake -B build -S source_repo/source \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
           -DTESTING=OFF \
           -DBUILD_TESTING=OFF \
-          -DCMAKE_PREFIX_PATH="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib/cmake"
+          -DCMAKE_PREFIX_PATH="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib/cmake;${{ github.workspace }}/taglib_build"
 
     - name: Compile and Build Application
       run: |
@@ -69,3 +67,4 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
