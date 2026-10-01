@@ -22,8 +22,8 @@ jobs:
         brew install ffmpeg googletest chromaprint google-benchmark libebur128 fftw libkeyfinder flac libvorbis sound-touch portaudio hidapi portmidi protobuf rubberband boost pkg-config
         
         echo "Fetching and installing legacy TagLib 1.x branch formula..."
-        # Corrected URL from githubusercontent.com to raw.githubusercontent.com
-        curl -fsSL https://githubusercontent.com -o taglib.rb
+        # Explicitly added the 'raw.' subdomain prefix to resolve the curl host error
+        curl -fsSL https://raw.githubusercontent.com/Homebrew/homebrew-core/049171ee6a8585e8d53006d691eb29959f635da2/Formula/t/taglib.rb -o taglib.rb
         brew install --formula ./taglib.rb
 
     - name: Set Up Qt5 Environment
@@ -54,3 +54,4 @@ jobs:
         name: MIXXX2.4-VIDEO-BACKPORT-BUILD
         path: build/
         retention-days: 7
+
