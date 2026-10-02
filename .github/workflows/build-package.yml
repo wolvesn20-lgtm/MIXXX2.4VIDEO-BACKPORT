@@ -17,6 +17,9 @@ jobs:
         with:
           submodules: recursive
           path: source_repo
+      - name: Remove conflicting OpenSSL 1.1 link
+        run: |
+          brew unlink openssl@1.1 || true
 
       - name: Install All Core Mixxx Dependencies
         run: |
@@ -42,7 +45,7 @@ jobs:
             rubberband \
             boost \
             pkg-config
-
+            
       - name: Set Up Qt5 Environment
         uses: jurplel/install-qt-action@v4
         with:
