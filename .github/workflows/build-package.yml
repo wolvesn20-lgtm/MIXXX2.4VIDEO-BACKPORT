@@ -22,7 +22,7 @@ jobs:
           submodules: recursive
           path: source_repo
 
-      -       - name: Remove conflicting OpenSSL 1.1 link
+      - name: Remove conflicting OpenSSL 1.1 link
         run: |
           set -euxo pipefail
 
