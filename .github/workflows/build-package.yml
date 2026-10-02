@@ -22,17 +22,14 @@ jobs:
           submodules: recursive
           path: source_repo
 
-      - name: Remove conflicting OpenSSL 1.1 link
-        run: 
+      -       - name: Remove conflicting OpenSSL 1.1 link
+        run: |
           set -euxo pipefail
 
           brew unlink openssl@1.1 || true
 
-          if [ -L "/usr/local/bin/openssl" ]; then
-            TARGET="$(readlink "/usr/local/bin/openssl")"
-            if [[ "$TARGET" == *"openssl@1.1"* ]]; then
-              rm "/usr/local/bin/openssl"
-            fi
+          if [ -L "/usr/local/bin/openssl" ] && readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then
+            rm -f "/usr/local/bin/openssl"
           fi
 
       - name: Install All Core Mixxx Dependencies
