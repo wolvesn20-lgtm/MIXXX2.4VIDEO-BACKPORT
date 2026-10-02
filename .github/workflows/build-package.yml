@@ -31,6 +31,24 @@ jobs:
           if [ -L "/usr/local/bin/openssl" ] && readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then
             rm -f "/usr/local/bin/openssl"
           fi
+                - name: Install Compatible CMake
+        run: |
+          set -euxo pipefail
+
+          brew uninstall --ignore-dependencies cmake || true
+
+          curl -L \
+            https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-macos-universal.tar.gz \
+            -o /tmp/cmake.tar.gz
+
+          sudo tar -xzf /tmp/cmake.tar.gz -C /usr/local
+
+          CMAKE_DIR="/usr/local/cmake-3.28.6-macos-universal/CMake.app/Contents/bin"
+
+          echo "$CMAKE_DIR" >> "$GITHUB_PATH"
+          export PATH="$CMAKE_DIR:$PATH"
+
+          cmake --version
 
       - name: Install All Core Mixxx Dependencies
         run: |
