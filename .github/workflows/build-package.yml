@@ -11,23 +11,13 @@ jobs:
   build-macos-intel:
     runs-on: macos-15-intel
 
-    steps:
-      - name: Checkout Primary Repository Code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Checkout Primary Repository Code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          path: source_repo
-      - name: Checkout Primary Repository Code
+  - name: Checkout Primary Repository Code
         uses: actions/checkout@v4
         with:
           submodules: recursive
           path: source_repo
 
-      - name: Install Compatible CMake
+    - name: Install Compatible CMake
         run: |
           set -euxo pipefail
 
@@ -46,7 +36,10 @@ jobs:
 
           cmake --version
 
-      
+      - name: Remove conflicting OpenSSL 1.1 link
+        run: |
+          set -euxo pipefail
+
           brew unlink openssl@1.1 || true
       - name: Remove conflicting OpenSSL 1.1 link
         run: |
