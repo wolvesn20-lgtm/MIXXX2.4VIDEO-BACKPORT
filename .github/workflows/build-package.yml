@@ -11,11 +11,13 @@ jobs:
   build-macos-intel:
     runs-on: macos-15-intel
 
-     - name: Checkout Primary Repository Code
+    steps:
+      - name: Checkout Primary Repository Code
         uses: actions/checkout@v4
         with:
           submodules: recursive
           path: source_repo
+
       - name: Install Compatible CMake
         run: |
           set -euxo pipefail
@@ -35,17 +37,6 @@ jobs:
 
           cmake --version
 
-      - name: Remove conflicting OpenSSL 1.1 link
-        run: |
-          set -euxo pipefail
-
-          brew unlink openssl@1.1 || true
-
-      - name: Remove conflicting OpenSSL 1.1 link
-        run: |
-          set -euxo pipefail
-
-          brew unlink openssl@1.1 || true
       - name: Remove conflicting OpenSSL 1.1 link
         run: |
           set -euxo pipefail
@@ -55,42 +46,7 @@ jobs:
           if [ -L "/usr/local/bin/openssl" ] && readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then
             rm -f "/usr/local/bin/openssl"
           fi
-                - name: Install Compatible CMake
-        run: |
-          set -euxo pipefail
 
-          brew uninstall --ignore-dependencies cmake || true
-
-          curl -L \
-            https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-macos-universal.tar.gz \
-            -o /tmp/cmake.tar.gz
-
-          sudo tar -xzf /tmp/cmake.tar.gz -C /usr/local
-
-          CMAKE_DIR="/usr/local/cmake-3.28.6-macos-universal/CMake.app/Contents/bin"
-
-          echo "$CMAKE_DIR" >> "$GITHUB_PATH"
-          export PATH="$CMAKE_DIR:$PATH"
-
-          cmake --version
-      - name: Install Compatible CMake
-        run: |
-          set -euxo pipefail
-
-          brew uninstall --ignore-dependencies cmake || true
-
-          curl -L \
-            https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-macos-universal.tar.gz \
-            -o /tmp/cmake.tar.gz
-
-          sudo tar -xzf /tmp/cmake.tar.gz -C /usr/local
-
-          CMAKE_DIR="/usr/local/cmake-3.28.6-macos-universal/CMake.app/Contents/bin"
-
-          echo "$CMAKE_DIR" >> "$GITHUB_PATH"
-          export PATH="$CMAKE_DIR:$PATH"
-
-          cmake --version
       - name: Install All Core Mixxx Dependencies
         run: |
           set -euxo pipefail
@@ -114,15 +70,14 @@ jobs:
             protobuf \
             rubberband \
             boost \
-            pkg-config
-      - name: Set Up Qt5 Environment
+            pkg-config      - name: Set Up Qt5 Environment
         uses: jurplel/install-qt-action@v4
         with:
           version: "5.15.2"
           host: "mac"
           target: "desktop"
           dir: "${{ github.workspace }}/qt"
-          setup-python: true
+          setup-python: false
 
       - name: Clone Legacy TagLib 1.11.1 Source
         uses: actions/checkout@v4
