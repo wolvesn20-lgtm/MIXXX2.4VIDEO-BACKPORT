@@ -16,10 +16,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Checkout Primary Repository Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
           path: source_repo
+
       - name: Remove conflicting OpenSSL 1.1 link
-        run: |
+        run: 
+          set -euxo pipefail
+
           brew unlink openssl@1.1 || true
+
+          if [ -L "/usr/local/bin/openssl" ]; then
+            TARGET="$(readlink "/usr/local/bin/openssl")"
+            if [[ "$TARGET" == *"openssl@1.1"* ]]; then
+              rm "/usr/local/bin/openssl"
+            fi
+          fi
 
       - name: Install All Core Mixxx Dependencies
         run: |
