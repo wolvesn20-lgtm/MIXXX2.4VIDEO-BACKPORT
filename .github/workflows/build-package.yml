@@ -57,14 +57,14 @@ jobs:
             boost \
             pkg-config
             
-      - name: Set Up Qt5 Environment
+      -       - name: Set Up Qt5 Environment
         uses: jurplel/install-qt-action@v4
         with:
           version: "5.15.2"
           host: "mac"
           target: "desktop"
           dir: "${{ github.workspace }}/qt"
-          setup-python: false
+          setup-python: true
 
       - name: Clone Legacy TagLib 1.11.1 Source
         uses: actions/checkout@v4
