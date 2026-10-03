@@ -85,7 +85,7 @@ jobs:
 
           echo "${{ github.workspace }}/qt-python/bin" >> "$GITHUB_PATH"
 
-            - name: Set Up Qt5 Environment
+      - name: Set Up Qt5 Environment
         uses: jurplel/install-qt-action@v4
         env:
           PIP_BREAK_SYSTEM_PACKAGES: "1"
