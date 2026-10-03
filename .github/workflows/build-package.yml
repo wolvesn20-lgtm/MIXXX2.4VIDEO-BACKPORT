@@ -111,6 +111,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="${QT_PREFIX}" \
             -DCMAKE_INSTALL_PREFIX="${QTKEYCHAIN_PREFIX}" \
+            -DBUILD_WITH_QT6=OFF \
+            -DBUILD_TRANSLATIONS=OFF \
             -DBUILD_TESTING=OFF
 
           cmake \
@@ -122,46 +124,8 @@ jobs:
             --install qtkeychain_build \
             --config Release
 
-      - name: Clone Legacy TagLib 1.11.1 Source
-        uses: actions/checkout@v4
-        with:
-          repository: taglib/taglib
-          ref: v1.11.1
-          path: taglib_src
-
-      - name: Configure Legacy TagLib
-        run: |
-          set -euxo pipefail
-
-          cmake \
-            -S taglib_src \
-            -B taglib_build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DBUILD_TESTS=OFF \
-            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/taglib_install"
-
-      - name: Build and Install Legacy TagLib
-        run: |
-          set -euxo pipefail
-
-          cmake \
-            --build taglib_build \
-            --config Release \
-            --parallel 4
-
-          cmake \
-            --install taglib_build \
-            --config Release
-
-      - name: Verify Legacy TagLib Installation
-        run: |
-          set -euxo pipefail
-
-          echo "TagLib installation:"
-          find "${{ github.workspace }}/taglib_install" -maxdepth 4 -type f | sort
+          echo "Qt5Keychain installation:"
+          find "${QTKEYCHAIN_PREFIX}" -type f | sort" -maxdepth 4 -type f | sort
 
       - name: Configure Mixxx CMake Project
         run: |
@@ -177,19 +141,12 @@ jobs:
             -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DCMAKE_PREFIX_PATH="${QT_PREFIX}/lib/cmake;${TAGLIB_PREFIX}" \
-            -DTESTING=OFF \
-            -DBUILD_TESTING=OFF \
-            -DOPTIMIZE=portable
+                        -DCMAKE_PREFIX_PATH="${QT_PREFIX}/lib/cmake;${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}" \
 
-      - name: Build Mixxx Application
-        run: |
-          set -euxo pipefail
-
-          cmake \
-            --build build \
-            --config Release \
-            --parallel 4
+       - name:Build Mixxx Application
+              QT_PREFIX="${{ github.workspace }}/qt/Qt/5.15.2/macos"
+              QTKEYCHAIN_PREFIX="${{ github.workspace }}/qtkeychain_install"
+              TAGLIB_PREFIX="${{ github.workspace }}/taglib_install"
 
       - name: Create macOS DMG
         run: |
