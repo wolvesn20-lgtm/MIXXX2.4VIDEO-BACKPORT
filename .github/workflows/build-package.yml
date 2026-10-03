@@ -71,8 +71,7 @@ jobs:
             rubberband \
             boost \
             pkg-config
-      
-          
+            
        - name: Set Up Qt5 Environment
         uses: jurplel/install-qt-action@v4
         env:
