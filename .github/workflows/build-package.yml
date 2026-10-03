@@ -71,7 +71,15 @@ jobs:
             rubberband \
             boost \
             pkg-config
+      - name: Prepare Python for Qt Installer
+        run: |
+          set -euxo pipefail
 
+          python3 -m venv "${{ github.workspace }}/qt-python"
+
+          source "${{ github.workspace }}/qt-python/bin/activate"
+
+          python -m pip install --upgrade pip setuptools
       -       - name: Set Up Qt5 Environment
         uses: jurplel/install-qt-action@v4
         with:
