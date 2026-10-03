@@ -85,7 +85,7 @@ jobs:
 
           echo "${{ github.workspace }}/qt-python/bin" >> "$GITHUB_PATH"
 
-      - name: Set Up Qt5 Environment
+            - name: Set Up Qt5 Environment
         uses: jurplel/install-qt-action@v4
         env:
           PIP_BREAK_SYSTEM_PACKAGES: "1"
@@ -95,6 +95,32 @@ jobs:
           target: "desktop"
           dir: "${{ github.workspace }}/qt"
           setup-python: true
+
+      - name: Build Qt5Keychain
+        run: |
+          set -euxo pipefail
+
+          git clone --depth 1 --branch 0.15.0 https://github.com/frankosterfeld/qtkeychain.git qtkeychain_src
+
+          QT_PREFIX="${{ github.workspace }}/qt/Qt/5.15.2/macos"
+          QTKEYCHAIN_PREFIX="${{ github.workspace }}/qtkeychain_install"
+
+          cmake \
+            -S qtkeychain_src \
+            -B qtkeychain_build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="${QT_PREFIX}" \
+            -DCMAKE_INSTALL_PREFIX="${QTKEYCHAIN_PREFIX}" \
+            -DBUILD_TESTING=OFF
+
+          cmake \
+            --build qtkeychain_build \
+            --config Release \
+            --parallel 4
+
+          cmake \
+            --install qtkeychain_build \
+            --config Release
 
       - name: Clone Legacy TagLib 1.11.1 Source
         uses: actions/checkout@v4
