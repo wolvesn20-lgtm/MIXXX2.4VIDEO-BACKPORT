@@ -189,12 +189,13 @@ jobs:
 
           echo "Qt5Keychain CMake package found."
 
-      - name: Configure Mixxx CMake Project
+      -       - name: Configure Mixxx CMake Project
         run: |
           set -euxo pipefail
 
+          rm -rf build
+
           QT_PREFIX="${{ github.workspace }}/qt/Qt/5.15.2/macos"
-          QTKEYCHAIN_PREFIX="${{ github.workspace }}/qtkeychain_install"
           TAGLIB_PREFIX="${{ github.workspace }}/taglib_install"
 
           export PKG_CONFIG_PATH="${TAGLIB_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
@@ -204,9 +205,10 @@ jobs:
             -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DCMAKE_PREFIX_PATH="${QT_PREFIX}/lib/cmake;${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}" \
+            -DCMAKE_PREFIX_PATH="${QT_PREFIX}/lib/cmake;${TAGLIB_PREFIX}" \
             -DTESTING=OFF \
             -DBUILD_TESTING=OFF \
+            -DBUILD_BENCH=OFF \
             -DOPTIMIZE=portable
 
       - name: Build Mixxx Application
