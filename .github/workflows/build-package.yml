@@ -71,24 +71,18 @@ jobs:
             rubberband \
             boost \
             pkg-config
-      - name: Prepare Python for Qt Installer
-        run: |
-          set -euxo pipefail
-
-          python3 -m venv "${{ github.workspace }}/qt-python"
-
-          source "${{ github.workspace }}/qt-python/bin/activate"
-
-          python -m pip install --upgrade pip setuptools
+      
           
-      - name: Set Up Qt5 Environment
+       - name: Set Up Qt5 Environment
         uses: jurplel/install-qt-action@v4
+        env:
+          PIP_BREAK_SYSTEM_PACKAGES: "1"
         with:
           version: "5.15.2"
           host: "mac"
           target: "desktop"
           dir: "${{ github.workspace }}/qt"
-          setup-python: false
+          setup-python: true
           
       - name: Clone Legacy TagLib 1.11.1 Source
         uses: actions/checkout@v4
