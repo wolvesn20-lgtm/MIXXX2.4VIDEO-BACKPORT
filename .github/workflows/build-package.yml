@@ -70,7 +70,7 @@ jobs:
             protobuf \
             rubberband \
             boost \
-            ms-gsl \
+            cpp-gsl \
             pkg-config
 
       - name: Set Up Python Environment for Qt
