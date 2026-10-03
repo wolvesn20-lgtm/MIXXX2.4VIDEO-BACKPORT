@@ -80,7 +80,8 @@ jobs:
           source "${{ github.workspace }}/qt-python/bin/activate"
 
           python -m pip install --upgrade pip setuptools
-      -       - name: Set Up Qt5 Environment
+          
+      - name: Set Up Qt5 Environment
         uses: jurplel/install-qt-action@v4
         with:
           version: "5.15.2"
@@ -88,6 +89,7 @@ jobs:
           target: "desktop"
           dir: "${{ github.workspace }}/qt"
           setup-python: false
+          
       - name: Clone Legacy TagLib 1.11.1 Source
         uses: actions/checkout@v4
         with:
