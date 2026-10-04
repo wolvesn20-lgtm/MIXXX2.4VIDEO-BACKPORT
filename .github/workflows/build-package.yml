@@ -84,7 +84,7 @@ jobs:
           dir: "${{ github.workspace }}/qt"
           setup-python: true
 
-            - name: Build Qt5Keychain
+      - name: Build Qt5Keychain
         run: |
           set -euxo pipefail
 
