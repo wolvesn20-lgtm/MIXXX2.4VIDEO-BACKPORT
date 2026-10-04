@@ -84,7 +84,7 @@ jobs:
           dir: "${{ github.workspace }}/qt"
           setup-python: true
 
-      - name: Build Qt5Keychain
+            - name: Build Qt5Keychain
         run: |
           set -euxo pipefail
 
@@ -94,12 +94,16 @@ jobs:
             https://github.com/frankosterfeld/qtkeychain.git \
             qtkeychain_src
 
-          QT_PREFIX="${{ github.workspace }}/qt/Qt/5.15.2/macos"
-          QTKEYCHAIN_PREFIX="${{ github.workspace }}/qtkeychain_install"
+          WORKSPACE="${GITHUB_WORKSPACE}"
+          QT_PREFIX="$WORKSPACE/qt/Qt/5.15.2/macos"
+          QTKEYCHAIN_PREFIX="$WORKSPACE/qtkeychain_install"
 
           cmake \
             -S qtkeychain_src \
             -B qtkeychain_build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="${QT_PREFIX}" \
-            -DCMAKE_INSTALL_PREFIX="${QTKEYCHAIN_PREFIX
+            -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
+            -DCMAKE_INSTALL_PREFIX="$QTKEYCHAIN_PREFIX" \
+            -DBUILD_WITH_QT6=OFF \
+            -DBUILD_TRANSLATIONS=OFF \
+            -DBUILD_TESTING=OFF
