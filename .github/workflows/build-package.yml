@@ -238,8 +238,7 @@ jobs:
             --build build \
             --config Release \
             --parallel 4
-
-      - name: Create macOS DMG
+       - name: Create macOS DMG
         run: |
           set -euxo pipefail
 
@@ -254,8 +253,10 @@ jobs:
           find . -maxdepth 2 -type f \
             \( \
               -name "*.dmg" \
-              -o -name "*.pkg" \
-              -o -name "*.tar.gz" \
+              -o \
+              -name "*.pkg" \
+              -o \
+              -name "*.tar.gz" \
             \) \
             -print
 
