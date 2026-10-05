@@ -43,7 +43,8 @@ jobs:
 
           brew unlink openssl@1.1 || true
 
-          if [ -L "/usr/local/bin/openssl" ] && readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then
+          if [ -L "/usr/local/bin/openssl" ] && \
+             readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then
             rm -f "/usr/local/bin/openssl"
           fi
 
@@ -119,7 +120,7 @@ jobs:
             --config Release
 
           echo "Qt5Keychain installation:"
-          find "${QTKEYCHAIN_PREFIX}" -type f | sort
+          find "${QTKEYCHAIN_PREFIX}" -type f -print
 
       - name: Clone Legacy TagLib 1.11.1 Source
         uses: actions/checkout@v4
@@ -160,7 +161,10 @@ jobs:
           set -euxo pipefail
 
           echo "TagLib installation:"
-          find "${{ github.workspace }}/taglib_install" -maxdepth 4 -type f | sort
+
+          find "${{ github.workspace }}/taglib_install" \
+            -type f \
+            -print
 
       - name: Verify Qt5Keychain Package
         run: |
@@ -168,7 +172,7 @@ jobs:
 
           QTKEYCHAIN_PREFIX="${{ github.workspace }}/qtkeychain_install"
 
-          echo "Searching for Qt5Keychain CMake package files..."
+          echo "Searching for Qt5Keychain CMake package files:"
 
           find "${QTKEYCHAIN_PREFIX}" \
             -type f \
@@ -185,11 +189,10 @@ jobs:
               -o -name "qt5keychain-config.cmake" \
             \) \
             | grep -q .; then
-            echo "ERROR: Qt5Keychain CMake package configuration was not installed."
+
+            echo "ERROR: Qt5Keychain CMake package could not be found."
             exit 1
           fi
-
-          echo "Qt5Keychain CMake package found."
 
       - name: Configure Mixxx CMake Project
         run: |
@@ -201,9 +204,8 @@ jobs:
           TAGLIB_PREFIX="${{ github.workspace }}/taglib_install"
           QTKEYCHAIN_PREFIX="${{ github.workspace }}/qtkeychain_install"
 
-          export PKG_CONFIG_PATH="${TAGLIB_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-
-          export CMAKE_PREFIX_PATH="${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX};${CMAKE_PREFIX_PATH:-}"
+          export PKG_CONFIG_PATH="${TAGLIB_PREFIX}/lib/pkgconfig"
+          export CMAKE_PREFIX_PATH="${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}"
 
           echo "CMAKE_PREFIX_PATH:"
           echo "$CMAKE_PREFIX_PATH"
@@ -212,6 +214,7 @@ jobs:
           qmake -v
 
           echo "Qt5Keychain CMake files:"
+
           find "${QTKEYCHAIN_PREFIX}" \
             -type f \
             \( \
@@ -225,7 +228,6 @@ jobs:
             -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DCMAKE_PREFIX_PATH="${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}" \
             -DTESTING=OFF \
             -DBUILD_TESTING=OFF \
             -DBUILD_BENCH=OFF \
@@ -239,7 +241,8 @@ jobs:
             --build build \
             --config Release \
             --parallel 4
-       - name: Create macOS DMG
+
+      - name: Create macOS DMG
         run: |
           set -euxo pipefail
 
@@ -265,74 +268,15 @@ jobs:
         run: |
           set -euxo pipefail
 
-          DMG_COUNT=$(find build -type f -name "*.dmg" | wc -l | tr -d ' ')
+          DMG_COUNT=$(find build -maxdepth 2 -type f -name "*.dmg" | wc -l | tr -d ' ')
 
           if [ "$DMG_COUNT" -eq 0 ]; then
             echo "ERROR: No DMG was created."
             exit 1
           fi
 
-          echo "DMG successfully created:"
-
-          find build -type f -name "*.dmg" -print
-
-      - name: Upload macOS DMG
-        uses: actions/upload-artifact@v4
-        with:
-          name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
-          path: build/*.dmg
-          if-no-files-found: error
-          retention-days: 7
-          
-      - name: Configure Mixxx CMake Project
-        run: |
-          set -euxo pipefail
-
-          rm -rf build
-
-          QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
-          QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
-
-          cmake \
-            -S source_repo/source \
-            -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DCMAKE_PREFIX_PATH="$QT_PREFIX;$QTKEYCHAIN_PREFIX" \
-            -DQt5Keychain_DIR="$QTKEYCHAIN_CMAKE_DIR" \
-            -DTESTING=OFF \
-            -DBUILD_TESTING=OFF \
-            -DBUILD_BENCH=OFF \
-            -DOPTIMIZE=portable
-
-      - name: Build Mixxx Application
-        run: |
-          set -euxo pipefail
-
-          cmake \
-            --build build \
-            --config Release \
-            --parallel 4
-
-      - name: Create macOS DMG
-        run: |
-          set -euxo pipefail
-
-          cd build
-          cpack -G DragNDrop -C Release
-
-      - name: Verify DMG
-        run: |
-          set -euxo pipefail
-
-          DMG_COUNT=$(find build -type f -name "*.dmg" | wc -l | tr -d ' ')
-
-          if [ "$DMG_COUNT" -eq 0 ]; then
-            echo "ERROR: No DMG was created."
-            exit 1
-          fi
-
-          find build -type f -name "*.dmg" -print
+          echo "DMG verification successful:"
+          find build -maxdepth 2 -type f -name "*.dmg" -print
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
