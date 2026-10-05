@@ -51,9 +51,6 @@ jobs:
       - name: Install All Core Mixxx Dependencies
         run: |
           set -euxo pipefail
-
-          brew update
-
           brew install \
             ffmpeg \
             googletest \
@@ -71,6 +68,7 @@ jobs:
             protobuf \
             rubberband \
             boost \
+            taglib \
             cpp-gsl \
             pkg-config
 
