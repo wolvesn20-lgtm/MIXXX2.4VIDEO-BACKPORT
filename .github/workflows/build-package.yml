@@ -70,6 +70,7 @@ jobs:
             protobuf \
             rubberband \
             boost \
+            taglib \
             cpp-gsl \
             pkg-config
 
