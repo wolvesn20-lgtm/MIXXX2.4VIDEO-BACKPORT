@@ -85,7 +85,7 @@ jobs:
           dir: "${{ github.workspace }}/qt"
           setup-python: true
 
-            - name: Build Qt5Keychain
+      - name: Build Qt5Keychain
         run: |
           set -euxo pipefail
 
@@ -273,6 +273,63 @@ jobs:
           fi
 
           echo "DMG successfully created:"
+
+          find build -type f -name "*.dmg" -print
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
+          path: build/*.dmg
+          if-no-files-found: error
+          retention-days: 7
+      - name: Configure Mixxx CMake Project
+        run: |
+          set -euxo pipefail
+
+          rm -rf build
+
+          QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
+          QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
+
+          cmake \
+            -S source_repo/source \
+            -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DCMAKE_PREFIX_PATH="$QT_PREFIX;$QTKEYCHAIN_PREFIX" \
+            -DQt5Keychain_DIR="$QTKEYCHAIN_CMAKE_DIR" \
+            -DTESTING=OFF \
+            -DBUILD_TESTING=OFF \
+            -DBUILD_BENCH=OFF \
+            -DOPTIMIZE=portable
+
+      - name: Build Mixxx Application
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            --build build \
+            --config Release \
+            --parallel 4
+
+      - name: Create macOS DMG
+        run: |
+          set -euxo pipefail
+
+          cd build
+          cpack -G DragNDrop -C Release
+
+      - name: Verify DMG
+        run: |
+          set -euxo pipefail
+
+          DMG_COUNT=$(find build -type f -name "*.dmg" | wc -l | tr -d ' ')
+
+          if [ "$DMG_COUNT" -eq 0 ]; then
+            echo "ERROR: No DMG was created."
+            exit 1
+          fi
 
           find build -type f -name "*.dmg" -print
 
