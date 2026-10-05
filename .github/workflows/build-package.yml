@@ -73,18 +73,7 @@ jobs:
             cpp-gsl \
             pkg-config
 
-      - name: Set Up Qt5 Environment
-        uses: jurplel/install-qt-action@v4
-        env:
-          PIP_BREAK_SYSTEM_PACKAGES: "1"
-        with:
-          version: "5.15.2"
-          host: "mac"
-          target: "desktop"
-          dir: "${{ github.workspace }}/qt"
-          setup-python: true
-
-      - name: Build Qt5Keychain
+            - name: Build Qt5Keychain
         run: |
           set -euxo pipefail
 
@@ -98,6 +87,10 @@ jobs:
           QT_PREFIX="$WORKSPACE/qt/Qt/5.15.2/macos"
           QTKEYCHAIN_PREFIX="$WORKSPACE/qtkeychain_install"
 
+          echo "Workspace: $WORKSPACE"
+          echo "Qt prefix: $QT_PREFIX"
+          echo "Qt5Keychain prefix: $QTKEYCHAIN_PREFIX"
+
           cmake \
             -S qtkeychain_src \
             -B qtkeychain_build \
@@ -107,3 +100,15 @@ jobs:
             -DBUILD_WITH_QT6=OFF \
             -DBUILD_TRANSLATIONS=OFF \
             -DBUILD_TESTING=OFF
+
+          cmake \
+            --build qtkeychain_build \
+            --config Release \
+            --parallel 4
+
+          cmake \
+            --install qtkeychain_build \
+            --config Release
+
+          echo "Qt5Keychain installation:"
+          find "$QTKEYCHAIN_PREFIX" -type f | sort
