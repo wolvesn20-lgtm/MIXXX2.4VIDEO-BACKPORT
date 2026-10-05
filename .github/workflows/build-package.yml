@@ -43,14 +43,16 @@ jobs:
 
           brew unlink openssl@1.1 || true
 
-          if [ -L "/usr/local/bin/openssl" ] && \
-             readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then
+          if [ -L "/usr/local/bin/openssl" ] && readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then
             rm -f "/usr/local/bin/openssl"
           fi
 
       - name: Install All Core Mixxx Dependencies
         run: |
           set -euxo pipefail
+
+          brew update
+
           brew install \
             ffmpeg \
             googletest \
@@ -68,7 +70,6 @@ jobs:
             protobuf \
             rubberband \
             boost \
-            taglib \
             cpp-gsl \
             pkg-config
 
@@ -83,7 +84,7 @@ jobs:
           dir: "${{ github.workspace }}/qt"
           setup-python: true
 
-      - name: Build Qt5Keychain
+            - name: Build Qt5Keychain
         run: |
           set -euxo pipefail
 
@@ -96,10 +97,6 @@ jobs:
           WORKSPACE="${GITHUB_WORKSPACE}"
           QT_PREFIX="$WORKSPACE/qt/Qt/5.15.2/macos"
           QTKEYCHAIN_PREFIX="$WORKSPACE/qtkeychain_install"
-
-          echo "Workspace: $WORKSPACE"
-          echo "Qt prefix: $QT_PREFIX"
-          echo "Qt5Keychain prefix: $QTKEYCHAIN_PREFIX"
 
           cmake \
             -S qtkeychain_src \
@@ -121,39 +118,77 @@ jobs:
             --config Release
 
           echo "Qt5Keychain installation:"
-          find "$QTKEYCHAIN_PREFIX" -type f | sort
+          find "${QTKEYCHAIN_PREFIX}" -type f | sort
+
+      - name: Clone Legacy TagLib 1.11.1 Source
+        uses: actions/checkout@v4
+        with:
+          repository: taglib/taglib
+          ref: v1.11.1
+          path: taglib_src
+
+      - name: Configure Legacy TagLib
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            -S taglib_src \
+            -B taglib_build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_TESTS=OFF \
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/taglib_install"
+
+      - name: Build and Install Legacy TagLib
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            --build taglib_build \
+            --config Release \
+            --parallel 4
+
+          cmake \
+            --install taglib_build \
+            --config Release
+
+      - name: Verify Legacy TagLib Installation
+        run: |
+          set -euxo pipefail
+
+          echo "TagLib installation:"
+          find "${{ github.workspace }}/taglib_install" -maxdepth 4 -type f | sort
 
       - name: Verify Qt5Keychain Package
         run: |
           set -euxo pipefail
 
-          QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
+          QTKEYCHAIN_PREFIX="${{ github.workspace }}/qtkeychain_install"
 
           echo "Searching for Qt5Keychain CMake package files..."
 
-          KEYCHAIN_CONFIG=$(find "$QTKEYCHAIN_PREFIX" \
+          find "${QTKEYCHAIN_PREFIX}" \
             -type f \
             \( \
               -name "Qt5KeychainConfig.cmake" \
-              -o \
-              -name "qt5keychain-config.cmake" \
+              -o -name "qt5keychain-config.cmake" \
             \) \
-            -print -quit)
+            -print
 
-          if [ -z "$KEYCHAIN_CONFIG" ]; then
+          if ! find "${QTKEYCHAIN_PREFIX}" \
+            -type f \
+            \( \
+              -name "Qt5KeychainConfig.cmake" \
+              -o -name "qt5keychain-config.cmake" \
+            \) \
+            | grep -q .; then
             echo "ERROR: Qt5Keychain CMake package configuration was not installed."
             exit 1
           fi
 
-          KEYCHAIN_DIR="$(dirname "$KEYCHAIN_CONFIG")"
-
-          echo "Qt5Keychain config:"
-          echo "$KEYCHAIN_CONFIG"
-
-          echo "Qt5Keychain CMake directory:"
-          echo "$KEYCHAIN_DIR"
-
-          echo "QTKEYCHAIN_CMAKE_DIR=$KEYCHAIN_DIR" >> "$GITHUB_ENV"
+          echo "Qt5Keychain CMake package found."
 
       - name: Configure Mixxx CMake Project
         run: |
@@ -161,25 +196,35 @@ jobs:
 
           rm -rf build
 
-          QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
-          QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
+          QT_PREFIX="${{ github.workspace }}/qt/Qt/5.15.2/macos"
+          TAGLIB_PREFIX="${{ github.workspace }}/taglib_install"
+          QTKEYCHAIN_PREFIX="${{ github.workspace }}/qtkeychain_install"
 
-          echo "Qt prefix:"
-          echo "$QT_PREFIX"
+          export PKG_CONFIG_PATH="${TAGLIB_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
-          echo "Qt5Keychain prefix:"
-          echo "$QTKEYCHAIN_PREFIX"
+          export CMAKE_PREFIX_PATH="${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX};${CMAKE_PREFIX_PATH:-}"
 
-          echo "Qt5Keychain CMake directory:"
-          echo "$QTKEYCHAIN_CMAKE_DIR"
+          echo "CMAKE_PREFIX_PATH:"
+          echo "$CMAKE_PREFIX_PATH"
+
+          echo "Qt5:"
+          qmake -v
+
+          echo "Qt5Keychain CMake files:"
+          find "${QTKEYCHAIN_PREFIX}" \
+            -type f \
+            \( \
+              -name "Qt5KeychainConfig.cmake" \
+              -o -name "qt5keychain-config.cmake" \
+            \) \
+            -print
 
           cmake \
             -S source_repo/source \
             -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DCMAKE_PREFIX_PATH="$QT_PREFIX;$QTKEYCHAIN_PREFIX" \
-            -DQt5Keychain_DIR="$QTKEYCHAIN_CMAKE_DIR" \
+            -DCMAKE_PREFIX_PATH="${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}" \
             -DTESTING=OFF \
             -DBUILD_TESTING=OFF \
             -DBUILD_BENCH=OFF \
@@ -209,10 +254,8 @@ jobs:
           find . -maxdepth 2 -type f \
             \( \
               -name "*.dmg" \
-              -o \
-              -name "*.pkg" \
-              -o \
-              -name "*.tar.gz" \
+              -o -name "*.pkg" \
+              -o -name "*.tar.gz" \
             \) \
             -print
 
