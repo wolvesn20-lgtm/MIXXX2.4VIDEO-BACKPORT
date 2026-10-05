@@ -43,7 +43,8 @@ jobs:
 
           brew unlink openssl@1.1 || true
 
-          if [ -L "/usr/local/bin/openssl" ] && readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then
+          if [ -L "/usr/local/bin/openssl" ] && \
+             readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then
             rm -f "/usr/local/bin/openssl"
           fi
 
@@ -73,7 +74,18 @@ jobs:
             cpp-gsl \
             pkg-config
 
-            - name: Build Qt5Keychain
+      - name: Set Up Qt5 Environment
+        uses: jurplel/install-qt-action@v4
+        env:
+          PIP_BREAK_SYSTEM_PACKAGES: "1"
+        with:
+          version: "5.15.2"
+          host: "mac"
+          target: "desktop"
+          dir: "${{ github.workspace }}/qt"
+          setup-python: true
+
+      - name: Build Qt5Keychain
         run: |
           set -euxo pipefail
 
@@ -112,3 +124,119 @@ jobs:
 
           echo "Qt5Keychain installation:"
           find "$QTKEYCHAIN_PREFIX" -type f | sort
+
+      - name: Verify Qt5Keychain Package
+        run: |
+          set -euxo pipefail
+
+          QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
+
+          echo "Searching for Qt5Keychain CMake package files..."
+
+          KEYCHAIN_CONFIG=$(find "$QTKEYCHAIN_PREFIX" \
+            -type f \
+            \( \
+              -name "Qt5KeychainConfig.cmake" \
+              -o \
+              -name "qt5keychain-config.cmake" \
+            \) \
+            -print -quit)
+
+          if [ -z "$KEYCHAIN_CONFIG" ]; then
+            echo "ERROR: Qt5Keychain CMake package configuration was not installed."
+            exit 1
+          fi
+
+          KEYCHAIN_DIR="$(dirname "$KEYCHAIN_CONFIG")"
+
+          echo "Qt5Keychain config:"
+          echo "$KEYCHAIN_CONFIG"
+
+          echo "Qt5Keychain CMake directory:"
+          echo "$KEYCHAIN_DIR"
+
+          echo "QTKEYCHAIN_CMAKE_DIR=$KEYCHAIN_DIR" >> "$GITHUB_ENV"
+
+      - name: Configure Mixxx CMake Project
+        run: |
+          set -euxo pipefail
+
+          rm -rf build
+
+          QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
+          QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
+
+          echo "Qt prefix:"
+          echo "$QT_PREFIX"
+
+          echo "Qt5Keychain prefix:"
+          echo "$QTKEYCHAIN_PREFIX"
+
+          echo "Qt5Keychain CMake directory:"
+          echo "$QTKEYCHAIN_CMAKE_DIR"
+
+          cmake \
+            -S source_repo/source \
+            -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DCMAKE_PREFIX_PATH="$QT_PREFIX;$QTKEYCHAIN_PREFIX" \
+            -DQt5Keychain_DIR="$QTKEYCHAIN_CMAKE_DIR" \
+            -DTESTING=OFF \
+            -DBUILD_TESTING=OFF \
+            -DBUILD_BENCH=OFF \
+            -DOPTIMIZE=portable
+
+      - name: Build Mixxx Application
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            --build build \
+            --config Release \
+            --parallel 4
+
+      - name: Create macOS DMG
+        run: |
+          set -euxo pipefail
+
+          cd build
+
+          cpack \
+            -G DragNDrop \
+            -C Release
+
+          echo "Generated packages:"
+
+          find . -maxdepth 2 -type f \
+            \( \
+              -name "*.dmg" \
+              -o \
+              -name "*.pkg" \
+              -o \
+              -name "*.tar.gz" \
+            \) \
+            -print
+
+      - name: Verify DMG
+        run: |
+          set -euxo pipefail
+
+          DMG_COUNT=$(find build -type f -name "*.dmg" | wc -l | tr -d ' ')
+
+          if [ "$DMG_COUNT" -eq 0 ]; then
+            echo "ERROR: No DMG was created."
+            exit 1
+          fi
+
+          echo "DMG successfully created:"
+
+          find build -type f -name "*.dmg" -print
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
+          path: build/*.dmg
+          if-no-files-found: error
+          retention-days: 7
