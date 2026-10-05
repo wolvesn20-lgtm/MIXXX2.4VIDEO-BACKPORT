@@ -283,6 +283,7 @@ jobs:
           path: build/*.dmg
           if-no-files-found: error
           retention-days: 7
+          
       - name: Configure Mixxx CMake Project
         run: |
           set -euxo pipefail
