@@ -194,15 +194,15 @@ jobs:
             exit 1
           fi
 
-      - name: Configure Mixxx CMake Project
+            - name: Configure Mixxx CMake Project
         run: |
           set -euxo pipefail
 
           rm -rf build
 
-          QT_PREFIX="${{ github.workspace }}/qt/Qt/5.15.2/macos"
-          TAGLIB_PREFIX="${{ github.workspace }}/taglib_install"
-          QTKEYCHAIN_PREFIX="${{ github.workspace }}/qtkeychain_install"
+          QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
+          TAGLIB_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
+          QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
 
           export PKG_CONFIG_PATH="${TAGLIB_PREFIX}/lib/pkgconfig"
           export CMAKE_PREFIX_PATH="${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}"
@@ -213,15 +213,31 @@ jobs:
           echo "Qt5:"
           qmake -v
 
-          echo "Qt5Keychain CMake files:"
+          echo "Locating Qt5Keychain CMake package..."
 
-          find "${QTKEYCHAIN_PREFIX}" \
-            -type f \
-            \( \
-              -name "Qt5KeychainConfig.cmake" \
-              -o -name "qt5keychain-config.cmake" \
-            \) \
-            -print
+          QT5KEYCHAIN_CONFIG="$(
+            find "${QTKEYCHAIN_PREFIX}" \
+              -type f \
+              \( \
+                -name "Qt5KeychainConfig.cmake" \
+                -o \
+                -name "qt5keychain-config.cmake" \
+              \) \
+              -print -quit
+          )"
+
+          if [ -z "$QT5KEYCHAIN_CONFIG" ]; then
+            echo "ERROR: Qt5Keychain CMake package was not found."
+            exit 1
+          fi
+
+          QT5KEYCHAIN_DIR="$(dirname "$QT5KEYCHAIN_CONFIG")"
+
+          echo "Qt5Keychain config:"
+          echo "$QT5KEYCHAIN_CONFIG"
+
+          echo "Qt5Keychain CMake directory:"
+          echo "$QT5KEYCHAIN_DIR"
 
           cmake \
             -S source_repo/source \
@@ -231,7 +247,9 @@ jobs:
             -DTESTING=OFF \
             -DBUILD_TESTING=OFF \
             -DBUILD_BENCH=OFF \
-            -DOPTIMIZE=portable
+            -DOPTIMIZE=portable \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -DQt5Keychain_DIR="$QT5KEYCHAIN_DIR"
 
       - name: Build Mixxx Application
         run: |
