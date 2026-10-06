@@ -193,9 +193,8 @@ jobs:
             echo "ERROR: Qt5Keychain CMake package could not be found."
             exit 1
           fi
-
-            - name: Configure Mixxx CMake Project
-              run: |
+      - name: Configure Mixxx CMake Project
+        run: |
           set -euxo pipefail
 
           rm -rf build
