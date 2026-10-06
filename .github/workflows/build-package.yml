@@ -195,7 +195,7 @@ jobs:
           fi
 
             - name: Configure Mixxx CMake Project
-        run: |
+              run: |
           set -euxo pipefail
 
           rm -rf build
