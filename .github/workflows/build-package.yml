@@ -18,23 +18,63 @@ jobs:
           submodules: recursive
           path: source_repo
 
+      - name: Remove Test-Only moc Source from Mixxx Library
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          cmake_file = Path("source_repo/source/CMakeLists.txt")
+          text = cmake_file.read_text()
+
+          needle = "  src/util/moc_included_test.cpp\n"
+
+          first = text.find(needle)
+
+          if first == -1:
+              raise SystemExit(
+                  "ERROR: Could not find the mixxx-lib moc_included_test.cpp entry."
+              )
+
+          text = text[:first] + text[first + len(needle):]
+
+          cmake_file.write_text(text)
+
+          print("Removed the first moc_included_test.cpp entry.")
+          print("The test target's own entry remains intact.")
+          PY
+
+          echo "Remaining moc_included_test.cpp entries:"
+          grep -n "moc_included_test.cpp" \
+            source_repo/source/CMakeLists.txt
+
       - name: Install Compatible CMake
         run: |
           set -euxo pipefail
+
           brew uninstall --ignore-dependencies cmake || true
+
           curl -L \
             https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-macos-universal.tar.gz \
             -o /tmp/cmake.tar.gz
+
           sudo tar -xzf /tmp/cmake.tar.gz -C /usr/local
+
           CMAKE_DIR="/usr/local/cmake-3.28.6-macos-universal/CMake.app/Contents/bin"
+
           echo "$CMAKE_DIR" >> "$GITHUB_PATH"
+
           export PATH="$CMAKE_DIR:$PATH"
+
           cmake --version
 
       - name: Remove conflicting OpenSSL 1.1 link
         run: |
           set -euxo pipefail
+
           brew unlink openssl@1.1 || true
+
           if [ -L "/usr/local/bin/openssl" ] && \
              readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then
             rm -f "/usr/local/bin/openssl"
@@ -43,7 +83,9 @@ jobs:
       - name: Install All Core Mixxx Dependencies
         run: |
           set -euxo pipefail
+
           brew update
+
           brew install \
             ffmpeg \
             googletest \
@@ -247,6 +289,7 @@ jobs:
 
           cmake \
             --build build \
+            --target mixxx \
             --config Release \
             --parallel 4
 
