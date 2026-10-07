@@ -171,7 +171,10 @@ jobs:
             --config Release
 
           echo "Qt5Keychain installation:"
-          find "${QTKEYCHAIN_PREFIX}" -type f -print
+
+          find "${QTKEYCHAIN_PREFIX}" \
+            -type f \
+            -print
 
       - name: Clone Legacy TagLib 1.11.1 Source
         uses: actions/checkout@v4
@@ -246,6 +249,7 @@ jobs:
             echo "ERROR: Qt5Keychain CMake package could not be found."
             exit 1
           fi
+
       - name: Add macOS AudioToolbox Framework
         run: |
           set -euxo pipefail
@@ -256,51 +260,40 @@ jobs:
           cmake_file = Path("source_repo/source/CMakeLists.txt")
           text = cmake_file.read_text()
 
-          if "find_library(AUDIOTOOLBOX_LIBRARY AudioToolbox REQUIRED)" in text:
-              print("AudioToolbox support already present.")
+          if '"-framework AudioToolbox"' in text:
+              print("AudioToolbox framework already present.")
               raise SystemExit(0)
 
-          marker = "find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)"
+          target = '        "-weak_framework IOKit"\n'
 
-          if marker not in text:
+          count = text.count(target)
+
+          if count != 1:
               raise SystemExit(
-                  "Could not find the macOS CoreFoundation framework section."
+                  f"ERROR: Expected exactly one dynamic macOS IOKit link entry, "
+                  f"found {count}"
               )
 
-          text = text.replace(
-              marker,
-              "find_library(AUDIOTOOLBOX_LIBRARY AudioToolbox REQUIRED)\n"
-              + marker,
-              1,
+          replacement = (
+              '        "-weak_framework IOKit"\n'
+              '        "-framework AudioToolbox"\n'
           )
 
-          marker = """target_link_libraries(mixxx-lib PUBLIC
-          ${COREFOUNDATION_LIBRARY}
-          )"""
-
-          if marker not in text:
-              raise SystemExit(
-                  "Could not find the expected mixxx-lib CoreFoundation link block."
-              )
-
-          replacement = """target_link_libraries(mixxx-lib PUBLIC
-          ${AUDIOTOOLBOX_LIBRARY}
-          ${COREFOUNDATION_LIBRARY}
-          )"""
-
-          text = text.replace(marker, replacement, 1)
+          text = text.replace(target, replacement, 1)
 
           cmake_file.write_text(text)
 
-          print("Added AudioToolbox to mixxx-lib.")
+          print("Added AudioToolbox to the dynamic macOS mixxx-lib link block.")
           PY
 
           echo "Verifying AudioToolbox wiring..."
-          grep -n -A8 -B2 "AUDIOTOOLBOX_LIBRARY" \
+
+          grep -n -A6 -B3 \
+            '"-framework AudioToolbox"' \
             source_repo/source/CMakeLists.txt
 
           echo "AudioToolbox patch verification successful."
-          
+
       - name: Configure Mixxx CMake Project
         run: |
           set -euxo pipefail
@@ -356,6 +349,72 @@ jobs:
             -DBUILD_BENCH=OFF \
             -DOPTIMIZE=portable \
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -DQt5Keychain_DIR="$QT5KEYCHAIN_DIR"
+
+      - name: Build Mixxx Application
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            --build build \
+            --config Release \
+            --parallel 4
+
+      - name: Create macOS DMG
+        run: |
+          set -euxo pipefail
+
+          cd build
+
+          cpack \
+            -G DragNDrop \
+            -C Release
+
+          echo "Generated packages:"
+
+          find . -maxdepth 2 -type f \
+            \( \
+              -name "*.dmg" \
+              -o \
+              -name "*.pkg" \
+              -o \
+              -name "*.tar.gz" \
+            \) \
+            -print
+
+      - name: Verify DMG
+        run: |
+          set -euxo pipefail
+
+          DMG_COUNT=$(
+            find build \
+              -maxdepth 2 \
+              -type f \
+              -name "*.dmg" \
+              | wc -l \
+              | tr -d ' '
+          )
+
+          if [ "$DMG_COUNT" -eq 0 ]; then
+            echo "ERROR: No DMG was created."
+            exit 1
+          fi
+
+          echo "DMG verification successful:"
+
+          find build \
+            -maxdepth 2 \
+            -type f \
+            -name "*.dmg" \
+            -print
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
+          path: build/*.dmg
+          if-no-files-found: error
+          retention-days: 7EFIX_PATH="$CMAKE_PREFIX_PATH" \
             -DQt5Keychain_DIR="$QT5KEYCHAIN_DIR"
 
       - name: Build Mixxx Application
