@@ -19,7 +19,7 @@ jobs:
           path: source_repo
        echo "Source patch verification successful."
        
-      -       - name: Remove Test-Only moc Source from Mixxx Library
+      - name: Remove Test-Only moc Source from Mixxx Library
         run: |
           set -euxo pipefail
 
