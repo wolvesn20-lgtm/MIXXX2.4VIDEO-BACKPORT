@@ -79,14 +79,17 @@ jobs:
       - name: Build Qt5Keychain
         run: |
           set -euxo pipefail
+
           git clone \
             --depth 1 \
             --branch 0.15.0 \
             https://github.com/frankosterfeld/qtkeychain.git \
             qtkeychain_src
+
           WORKSPACE="${GITHUB_WORKSPACE}"
           QT_PREFIX="$WORKSPACE/qt/Qt/5.15.2/macos"
           QTKEYCHAIN_PREFIX="$WORKSPACE/qtkeychain_install"
+
           cmake \
             -S qtkeychain_src \
             -B qtkeychain_build \
@@ -96,13 +99,16 @@ jobs:
             -DBUILD_WITH_QT6=OFF \
             -DBUILD_TRANSLATIONS=OFF \
             -DBUILD_TESTING=OFF
+
           cmake \
             --build qtkeychain_build \
             --config Release \
             --parallel 4
+
           cmake \
             --install qtkeychain_build \
             --config Release
+
           echo "Qt5Keychain installation:"
           find "${QTKEYCHAIN_PREFIX}" -type f -print
 
@@ -116,6 +122,7 @@ jobs:
       - name: Configure Legacy TagLib
         run: |
           set -euxo pipefail
+
           cmake \
             -S taglib_src \
             -B taglib_build \
@@ -129,10 +136,12 @@ jobs:
       - name: Build and Install Legacy TagLib
         run: |
           set -euxo pipefail
+
           cmake \
             --build taglib_build \
             --config Release \
             --parallel 4
+
           cmake \
             --install taglib_build \
             --config Release
@@ -140,6 +149,7 @@ jobs:
       - name: Verify Legacy TagLib Installation
         run: |
           set -euxo pipefail
+
           echo "TagLib installation:"
           find "${{ github.workspace }}/taglib_install" \
             -type f \
@@ -148,8 +158,11 @@ jobs:
       - name: Verify Qt5Keychain Package
         run: |
           set -euxo pipefail
+
           QTKEYCHAIN_PREFIX="${{ github.workspace }}/qtkeychain_install"
+
           echo "Searching for Qt5Keychain CMake package files:"
+
           find "${QTKEYCHAIN_PREFIX}" \
             -type f \
             \( \
@@ -158,6 +171,7 @@ jobs:
               -name "qt5keychain-config.cmake" \
             \) \
             -print
+
           if ! find "${QTKEYCHAIN_PREFIX}" \
             -type f \
             \( \
@@ -173,6 +187,7 @@ jobs:
       - name: Configure Mixxx CMake Project
         run: |
           set -euxo pipefail
+
           rm -rf build
 
           QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
@@ -229,6 +244,7 @@ jobs:
       - name: Build Mixxx Application
         run: |
           set -euxo pipefail
+
           cmake \
             --build build \
             --config Release \
@@ -237,11 +253,15 @@ jobs:
       - name: Create macOS DMG
         run: |
           set -euxo pipefail
+
           cd build
+
           cpack \
             -G DragNDrop \
             -C Release
+
           echo "Generated packages:"
+
           find . -maxdepth 2 -type f \
             \( \
               -name "*.dmg" \
@@ -255,12 +275,16 @@ jobs:
       - name: Verify DMG
         run: |
           set -euxo pipefail
+
           DMG_COUNT=$(find build -maxdepth 2 -type f -name "*.dmg" | wc -l | tr -d ' ')
+
           if [ "$DMG_COUNT" -eq 0 ]; then
             echo "ERROR: No DMG was created."
             exit 1
           fi
+
           echo "DMG verification successful:"
+
           find build -maxdepth 2 -type f -name "*.dmg" -print
 
       - name: Upload macOS DMG
