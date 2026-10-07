@@ -246,7 +246,61 @@ jobs:
             echo "ERROR: Qt5Keychain CMake package could not be found."
             exit 1
           fi
+      - name: Add macOS AudioToolbox Framework
+        run: |
+          set -euxo pipefail
 
+          python3 - <<'PY'
+          from pathlib import Path
+
+          cmake_file = Path("source_repo/source/CMakeLists.txt")
+          text = cmake_file.read_text()
+
+          if "find_library(AUDIOTOOLBOX_LIBRARY AudioToolbox REQUIRED)" in text:
+              print("AudioToolbox support already present.")
+              raise SystemExit(0)
+
+          marker = "find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)"
+
+          if marker not in text:
+              raise SystemExit(
+                  "Could not find the macOS CoreFoundation framework section."
+              )
+
+          text = text.replace(
+              marker,
+              "find_library(AUDIOTOOLBOX_LIBRARY AudioToolbox REQUIRED)\n"
+              + marker,
+              1,
+          )
+
+          marker = """target_link_libraries(mixxx-lib PUBLIC
+          ${COREFOUNDATION_LIBRARY}
+          )"""
+
+          if marker not in text:
+              raise SystemExit(
+                  "Could not find the expected mixxx-lib CoreFoundation link block."
+              )
+
+          replacement = """target_link_libraries(mixxx-lib PUBLIC
+          ${AUDIOTOOLBOX_LIBRARY}
+          ${COREFOUNDATION_LIBRARY}
+          )"""
+
+          text = text.replace(marker, replacement, 1)
+
+          cmake_file.write_text(text)
+
+          print("Added AudioToolbox to mixxx-lib.")
+          PY
+
+          echo "Verifying AudioToolbox wiring..."
+          grep -n -A8 -B2 "AUDIOTOOLBOX_LIBRARY" \
+            source_repo/source/CMakeLists.txt
+
+          echo "AudioToolbox patch verification successful."
+          
       - name: Configure Mixxx CMake Project
         run: |
           set -euxo pipefail
