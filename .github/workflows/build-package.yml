@@ -17,8 +17,9 @@ jobs:
         with:
           submodules: recursive
           path: source_repo
-
-      - name: Remove Test-Only moc Source from Mixxx Library
+       echo "Source patch verification successful."
+       
+      -       - name: Remove Test-Only moc Source from Mixxx Library
         run: |
           set -euxo pipefail
 
@@ -51,20 +52,23 @@ jobs:
           print("Kept moc_included_test.cpp in mixxx-test.")
           PY
 
-          echo "Remaining moc_included_test.cpp entry:"
-          grep -n "moc_included_test.cpp" \
+          echo "Remaining moc_included_test.cpp source entry:"
+
+          grep -n "^[[:space:]]*src/util/moc_included_test.cpp[[:space:]]*$" \
             source_repo/source/CMakeLists.txt
 
-          COUNT="$(grep -c "moc_included_test.cpp" \
-            source_repo/source/CMakeLists.txt || true)"
+          COUNT="$(
+            grep -c "^[[:space:]]*src/util/moc_included_test.cpp[[:space:]]*$" \
+              source_repo/source/CMakeLists.txt || true
+          )"
 
           if [ "$COUNT" -ne 1 ]; then
-            echo "ERROR: Expected exactly one remaining moc_included_test.cpp entry."
+            echo "ERROR: Expected exactly one remaining moc_included_test.cpp source entry."
             exit 1
           fi
 
           echo "Source patch verification successful."
-
+          
       - name: Install Compatible CMake
         run: |
           set -euxo pipefail
