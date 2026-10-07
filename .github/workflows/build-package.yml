@@ -26,28 +26,44 @@ jobs:
           from pathlib import Path
 
           cmake_file = Path("source_repo/source/CMakeLists.txt")
-          text = cmake_file.read_text()
+          lines = cmake_file.read_text().splitlines(keepends=True)
 
-          needle = "  src/util/moc_included_test.cpp\n"
+          target_line = "  src/util/moc_included_test.cpp\n"
 
-          first = text.find(needle)
+          indexes = [
+              i for i, line in enumerate(lines)
+              if line == target_line
+          ]
 
-          if first == -1:
+          if len(indexes) != 2:
               raise SystemExit(
-                  "ERROR: Could not find the mixxx-lib moc_included_test.cpp entry."
+                  f"ERROR: Expected exactly 2 moc_included_test.cpp entries, "
+                  f"found {len(indexes)}"
               )
 
-          text = text[:first] + text[first + len(needle):]
+          # First occurrence belongs to mixxx-lib.
+          # Second occurrence belongs to mixxx-test.
+          del lines[indexes[0]]
 
-          cmake_file.write_text(text)
+          cmake_file.write_text("".join(lines))
 
-          print("Removed the first moc_included_test.cpp entry.")
-          print("The test target's own entry remains intact.")
+          print("Removed moc_included_test.cpp from mixxx-lib.")
+          print("Kept moc_included_test.cpp in mixxx-test.")
           PY
 
-          echo "Remaining moc_included_test.cpp entries:"
+          echo "Remaining moc_included_test.cpp entry:"
           grep -n "moc_included_test.cpp" \
             source_repo/source/CMakeLists.txt
+
+          COUNT="$(grep -c "moc_included_test.cpp" \
+            source_repo/source/CMakeLists.txt || true)"
+
+          if [ "$COUNT" -ne 1 ]; then
+            echo "ERROR: Expected exactly one remaining moc_included_test.cpp entry."
+            exit 1
+          fi
+
+          echo "Source patch verification successful."
 
       - name: Install Compatible CMake
         run: |
@@ -193,6 +209,7 @@ jobs:
           set -euxo pipefail
 
           echo "TagLib installation:"
+
           find "${{ github.workspace }}/taglib_install" \
             -type f \
             -print
@@ -222,6 +239,7 @@ jobs:
               -name "qt5keychain-config.cmake" \
             \) \
             | grep -q .; then
+
             echo "ERROR: Qt5Keychain CMake package could not be found."
             exit 1
           fi
@@ -289,7 +307,6 @@ jobs:
 
           cmake \
             --build build \
-            --target mixxx \
             --config Release \
             --parallel 4
 
@@ -319,7 +336,14 @@ jobs:
         run: |
           set -euxo pipefail
 
-          DMG_COUNT=$(find build -maxdepth 2 -type f -name "*.dmg" | wc -l | tr -d ' ')
+          DMG_COUNT=$(
+            find build \
+              -maxdepth 2 \
+              -type f \
+              -name "*.dmg" \
+              | wc -l \
+              | tr -d ' '
+          )
 
           if [ "$DMG_COUNT" -eq 0 ]; then
             echo "ERROR: No DMG was created."
@@ -328,7 +352,11 @@ jobs:
 
           echo "DMG verification successful:"
 
-          find build -maxdepth 2 -type f -name "*.dmg" -print
+          find build \
+            -maxdepth 2 \
+            -type f \
+            -name "*.dmg" \
+            -print
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
