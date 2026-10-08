@@ -41,8 +41,6 @@ jobs:
                   f"found {len(indexes)}"
               )
 
-          # First occurrence belongs to mixxx-lib.
-          # Second occurrence belongs to mixxx-test.
           del lines[indexes[0]]
 
           cmake_file.write_text("".join(lines))
@@ -355,76 +353,13 @@ jobs:
         run: |
           set -euxo pipefail
 
-          cmake \
-            --build build \
-            --config Release \
-            --parallel 4
-
-      - name: Create macOS DMG
-        run: |
-          set -euxo pipefail
-
-          cd build
-
-          cpack \
-            -G DragNDrop \
-            -C Release
-
-          echo "Generated packages:"
-
-          find . -maxdepth 2 -type f \
-            \( \
-              -name "*.dmg" \
-              -o \
-              -name "*.pkg" \
-              -o \
-              -name "*.tar.gz" \
-            \) \
-            -print
-
-      - name: Verify DMG
-        run: |
-          set -euxo pipefail
-
-          DMG_COUNT=$(
-            find build \
-              -maxdepth 2 \
-              -type f \
-              -name "*.dmg" \
-              | wc -l \
-              | tr -d ' '
-          )
-
-          if [ "$DMG_COUNT" -eq 0 ]; then
-            echo "ERROR: No DMG was created."
-            exit 1
-          fi
-
-          echo "DMG verification successful:"
-
-          find build \
-            -maxdepth 2 \
-            -type f \
-            -name "*.dmg" \
-            -print
-
-      - name: Upload macOS DMG
-        uses: actions/upload-artifact@v4
-        with:
-          name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
-          path: build/*.dmg
-          if-no-files-found: error
-          retention-days: 7EFIX_PATH="$CMAKE_PREFIX_PATH" \
-            -DQt5Keychain_DIR="$QT5KEYCHAIN_DIR"
-
-      - name: Build Mixxx Application
-        run: |
-          set -euxo pipefail
+          export VERBOSE=1
 
           cmake \
             --build build \
             --config Release \
-            --parallel 4
+            --parallel 4 \
+            --verbose
 
       - name: Create macOS DMG
         run: |
