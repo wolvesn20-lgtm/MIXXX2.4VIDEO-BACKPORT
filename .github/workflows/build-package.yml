@@ -12,13 +12,20 @@ jobs:
     runs-on: macos-15-intel
 
     steps:
+
+      # ------------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------------
       - name: Checkout Primary Repository Code
         uses: actions/checkout@v4
         with:
           submodules: recursive
           path: source_repo
 
-      - name: Remove Test-Only moc Source from Mixxx Library
+      # ------------------------------------------------------------
+      # Fix moc_included_test.cpp placement
+      # ------------------------------------------------------------
+      - name: Fix moc_included_test.cpp Placement
         run: |
           set -euxo pipefail
 
@@ -26,46 +33,45 @@ jobs:
           from pathlib import Path
 
           cmake_file = Path("source_repo/source/CMakeLists.txt")
-          lines = cmake_file.read_text().splitlines(keepends=True)
+          text = cmake_file.read_text()
 
-          target_line = "  src/util/moc_included_test.cpp\n"
+          target = "        src/util/moc_included_test.cpp\n"
 
-          indexes = [
-              i for i, line in enumerate(lines)
-              if line == target_line
-          ]
+          occurrences = text.count(target)
 
-          if len(indexes) != 2:
+          if occurrences != 2:
               raise SystemExit(
-                  f"ERROR: Expected exactly 2 moc_included_test.cpp entries, "
-                  f"found {len(indexes)}"
+                  f"ERROR: Expected exactly two source-list entries for "
+                  f"moc_included_test.cpp before patch, found {occurrences}"
               )
 
-          del lines[indexes[0]]
+          # Remove the first occurrence, which belongs to mixxx-lib.
+          text = text.replace(target, "", 1)
 
-          cmake_file.write_text("".join(lines))
+          cmake_file.write_text(text)
 
           print("Removed moc_included_test.cpp from mixxx-lib.")
           print("Kept moc_included_test.cpp in mixxx-test.")
           PY
 
-          echo "Remaining moc_included_test.cpp source entry:"
-
+          echo "Verifying exact source-list entry..."
           grep -n "^[[:space:]]*src/util/moc_included_test.cpp[[:space:]]*$" \
             source_repo/source/CMakeLists.txt
 
-          COUNT="$(
-            grep -c "^[[:space:]]*src/util/moc_included_test.cpp[[:space:]]*$" \
-              source_repo/source/CMakeLists.txt || true
-          )"
+          COUNT="$(grep -c \
+            "^[[:space:]]*src/util/moc_included_test.cpp[[:space:]]*$" \
+            source_repo/source/CMakeLists.txt || true)"
 
           if [ "$COUNT" -ne 1 ]; then
-            echo "ERROR: Expected exactly one remaining moc_included_test.cpp source entry."
+            echo "ERROR: Expected exactly one remaining source-list entry."
             exit 1
           fi
 
-          echo "Source patch verification successful."
+          echo "moc_included_test.cpp patch verification successful."
 
+      # ------------------------------------------------------------
+      # Install known-compatible CMake
+      # ------------------------------------------------------------
       - name: Install Compatible CMake
         run: |
           set -euxo pipefail
@@ -73,10 +79,17 @@ jobs:
           brew uninstall --ignore-dependencies cmake || true
 
           curl -L \
-            https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-macos-universal.tar.gz \
-            -o /tmp/cmake.tar.gz
+            --fail \
+            --retry 5 \
+            --retry-delay 5 \
+            -o /tmp/cmake.tar.gz \
+            https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-macos-universal.tar.gz
 
-          sudo tar -xzf /tmp/cmake.tar.gz -C /usr/local
+          sudo rm -rf /usr/local/cmake-3.28.6-macos-universal
+
+          sudo tar -xzf \
+            /tmp/cmake.tar.gz \
+            -C /usr/local
 
           CMAKE_DIR="/usr/local/cmake-3.28.6-macos-universal/CMake.app/Contents/bin"
 
@@ -86,18 +99,29 @@ jobs:
 
           cmake --version
 
-      - name: Remove conflicting OpenSSL 1.1 link
+      # ------------------------------------------------------------
+      # OpenSSL cleanup
+      # ------------------------------------------------------------
+      - name: Prepare OpenSSL Environment
         run: |
           set -euxo pipefail
 
           brew unlink openssl@1.1 || true
 
-          if [ -L "/usr/local/bin/openssl" ] && \
-             readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then
-            rm -f "/usr/local/bin/openssl"
+          if [ -L /usr/local/bin/openssl ]; then
+            TARGET="$(readlink /usr/local/bin/openssl || true)"
+
+            if [ -n "$TARGET" ]; then
+              echo "Removing conflicting OpenSSL symlink:"
+              echo "/usr/local/bin/openssl -> $TARGET"
+              sudo rm -f /usr/local/bin/openssl
+            fi
           fi
 
-      - name: Install All Core Mixxx Dependencies
+      # ------------------------------------------------------------
+      # Homebrew dependencies
+      # ------------------------------------------------------------
+      - name: Install Homebrew Dependencies
         run: |
           set -euxo pipefail
 
@@ -124,130 +148,131 @@ jobs:
             cpp-gsl \
             pkg-config
 
-      - name: Set Up Qt5 Environment
+      # ------------------------------------------------------------
+      # Qt 5.15.2
+      # ------------------------------------------------------------
+      - name: Install Qt 5.15.2
         uses: jurplel/install-qt-action@v4
-        env:
-          PIP_BREAK_SYSTEM_PACKAGES: "1"
         with:
           version: "5.15.2"
           host: "mac"
           target: "desktop"
-          dir: "${{ github.workspace }}/qt"
-          setup-python: true
+          arch: "clang_64"
+          modules: ""
+          cache: false
 
+      # ------------------------------------------------------------
+      # Qt5Keychain
+      # ------------------------------------------------------------
       - name: Build Qt5Keychain
         run: |
           set -euxo pipefail
 
+          export QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
+          export QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
+
+          rm -rf qtkeychain
+          rm -rf "$QTKEYCHAIN_PREFIX"
+
           git clone \
-            --depth 1 \
             --branch 0.15.0 \
-            https://github.com/frankosterfeld/qtkeychain.git \
-            qtkeychain_src
-
-          WORKSPACE="${GITHUB_WORKSPACE}"
-          QT_PREFIX="$WORKSPACE/qt/Qt/5.15.2/macos"
-          QTKEYCHAIN_PREFIX="$WORKSPACE/qtkeychain_install"
+            --depth 1 \
+            https://github.com/frankosterfeld/qtkeychain.git
 
           cmake \
-            -S qtkeychain_src \
-            -B qtkeychain_build \
+            -S qtkeychain \
+            -B qtkeychain/build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
             -DCMAKE_INSTALL_PREFIX="$QTKEYCHAIN_PREFIX" \
-            -DBUILD_WITH_QT6=OFF \
-            -DBUILD_TRANSLATIONS=OFF \
-            -DBUILD_TESTING=OFF
+            -DCMAKE_PREFIX_PATH="$QT_PREFIX"
 
           cmake \
-            --build qtkeychain_build \
+            --build qtkeychain/build \
             --config Release \
             --parallel 4
 
           cmake \
-            --install qtkeychain_build \
-            --config Release
+            --install qtkeychain/build
 
-          echo "Qt5Keychain installation:"
-
-          find "${QTKEYCHAIN_PREFIX}" \
-            -type f \
-            -print
-
-      - name: Clone Legacy TagLib 1.11.1 Source
-        uses: actions/checkout@v4
-        with:
-          repository: taglib/taglib
-          ref: v1.11.1
-          path: taglib_src
-
-      - name: Configure Legacy TagLib
+      # ------------------------------------------------------------
+      # Legacy TagLib 1.11.1
+      # ------------------------------------------------------------
+      - name: Build Legacy TagLib 1.11.1
         run: |
           set -euxo pipefail
 
+          export TAGLIB_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
+
+          rm -rf taglib
+          rm -rf "$TAGLIB_PREFIX"
+
+          git clone \
+            --branch v1.11.1 \
+            --depth 1 \
+            https://github.com/taglib/taglib.git
+
           cmake \
-            -S taglib_src \
-            -B taglib_build \
+            -S taglib \
+            -B taglib/build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DCMAKE_INSTALL_PREFIX="$TAGLIB_PREFIX" \
             -DBUILD_SHARED_LIBS=OFF \
             -DBUILD_TESTS=OFF \
-            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/taglib_install"
-
-      - name: Build and Install Legacy TagLib
-        run: |
-          set -euxo pipefail
+            -DBUILD_EXAMPLES=OFF
 
           cmake \
-            --build taglib_build \
+            --build taglib/build \
             --config Release \
             --parallel 4
 
           cmake \
-            --install taglib_build \
-            --config Release
+            --install taglib/build
 
-      - name: Verify Legacy TagLib Installation
+      # ------------------------------------------------------------
+      # Dependency environment
+      # ------------------------------------------------------------
+      - name: Configure Dependency Environment
         run: |
           set -euxo pipefail
 
-          echo "TagLib installation:"
+          export QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
+          export TAGLIB_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
+          export QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
 
-          find "${{ github.workspace }}/taglib_install" \
-            -type f \
-            -print
+          echo "QT_PREFIX=$QT_PREFIX" >> "$GITHUB_ENV"
+          echo "TAGLIB_PREFIX=$TAGLIB_PREFIX" >> "$GITHUB_ENV"
+          echo "QTKEYCHAIN_PREFIX=$QTKEYCHAIN_PREFIX" >> "$GITHUB_ENV"
 
+          echo "PKG_CONFIG_PATH=${TAGLIB_PREFIX}/lib/pkgconfig" >> "$GITHUB_ENV"
+
+          echo "CMAKE_PREFIX_PATH=${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}" >> "$GITHUB_ENV"
+
+          echo "QT5KEYCHAIN_DIR=${QTKEYCHAIN_PREFIX}/lib/cmake/Qt5Keychain" >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------
+      # Verify Qt5Keychain
+      # ------------------------------------------------------------
       - name: Verify Qt5Keychain Package
         run: |
           set -euxo pipefail
 
-          QTKEYCHAIN_PREFIX="${{ github.workspace }}/qtkeychain_install"
+          echo "QT5KEYCHAIN_DIR=$QT5KEYCHAIN_DIR"
 
-          echo "Searching for Qt5Keychain CMake package files:"
-
-          find "${QTKEYCHAIN_PREFIX}" \
-            -type f \
-            \( \
+          if [ ! -f "$QT5KEYCHAIN_DIR/Qt5KeychainConfig.cmake" ]; then
+            echo "ERROR: Qt5KeychainConfig.cmake was not found."
+            find "$QTKEYCHAIN_PREFIX" \
               -name "Qt5KeychainConfig.cmake" \
-              -o \
-              -name "qt5keychain-config.cmake" \
-            \) \
-            -print
-
-          if ! find "${QTKEYCHAIN_PREFIX}" \
-            -type f \
-            \( \
-              -name "Qt5KeychainConfig.cmake" \
-              -o \
-              -name "qt5keychain-config.cmake" \
-            \) \
-            | grep -q .; then
-
-            echo "ERROR: Qt5Keychain CMake package could not be found."
+              -o -name "qt5keychain-config.cmake" \
+              -print
             exit 1
           fi
 
+          echo "Qt5Keychain package found:"
+          ls -la "$QT5KEYCHAIN_DIR"
+
+      # ------------------------------------------------------------
+      # Add AudioToolbox to dynamic macOS framework block
+      # ------------------------------------------------------------
       - name: Add macOS AudioToolbox Framework
         run: |
           set -euxo pipefail
@@ -268,8 +293,8 @@ jobs:
 
           if count != 1:
               raise SystemExit(
-                  f"ERROR: Expected exactly one dynamic macOS IOKit link entry, "
-                  f"found {count}"
+                  f"ERROR: Expected exactly one dynamic macOS IOKit "
+                  f"link entry, found {count}"
               )
 
           replacement = (
@@ -281,61 +306,27 @@ jobs:
 
           cmake_file.write_text(text)
 
-          print("Added AudioToolbox to the dynamic macOS mixxx-lib link block.")
+          print(
+              "Added AudioToolbox to the dynamic macOS "
+              "mixxx-lib link block."
+          )
           PY
 
           echo "Verifying AudioToolbox wiring..."
 
-          grep -n -A6 -B3 \
-            '"-framework AudioToolbox"' \
+          grep -n -A6 -B3 '"-framework AudioToolbox"' \
             source_repo/source/CMakeLists.txt
 
           echo "AudioToolbox patch verification successful."
 
-      - name: Configure Mixxx CMake Project
+      # ------------------------------------------------------------
+      # Configure Mixxx
+      # ------------------------------------------------------------
+      - name: Configure Mixxx
         run: |
           set -euxo pipefail
 
           rm -rf build
-
-          QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
-          TAGLIB_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
-          QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
-
-          export PKG_CONFIG_PATH="${TAGLIB_PREFIX}/lib/pkgconfig"
-          export CMAKE_PREFIX_PATH="${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}"
-
-          echo "CMAKE_PREFIX_PATH:"
-          echo "$CMAKE_PREFIX_PATH"
-
-          echo "Qt5:"
-          qmake -v
-
-          echo "Locating Qt5Keychain CMake package..."
-
-          QT5KEYCHAIN_CONFIG="$(
-            find "${QTKEYCHAIN_PREFIX}" \
-              -type f \
-              \( \
-                -name "Qt5KeychainConfig.cmake" \
-                -o \
-                -name "qt5keychain-config.cmake" \
-              \) \
-              -print -quit
-          )"
-
-          if [ -z "$QT5KEYCHAIN_CONFIG" ]; then
-            echo "ERROR: Qt5Keychain CMake package was not found."
-            exit 1
-          fi
-
-          QT5KEYCHAIN_DIR="$(dirname "$QT5KEYCHAIN_CONFIG")"
-
-          echo "Qt5Keychain config:"
-          echo "$QT5KEYCHAIN_CONFIG"
-
-          echo "Qt5Keychain CMake directory:"
-          echo "$QT5KEYCHAIN_DIR"
 
           cmake \
             -S source_repo/source \
@@ -349,6 +340,13 @@ jobs:
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
             -DQt5Keychain_DIR="$QT5KEYCHAIN_DIR"
 
+      # ------------------------------------------------------------
+      # Build Mixxx
+      #
+      # IMPORTANT:
+      # Use one job temporarily so the FIRST real compiler/linker
+      # failure cannot be hidden by parallel build output.
+      # ------------------------------------------------------------
       - name: Build Mixxx Application
         run: |
           set -euxo pipefail
@@ -358,10 +356,13 @@ jobs:
           cmake \
             --build build \
             --config Release \
-            --parallel 4 \
+            --parallel 1 \
             --verbose
 
-      - name: Create macOS DMG
+      # ------------------------------------------------------------
+      # Package DMG
+      # ------------------------------------------------------------
+      - name: Package Mixxx DMG
         run: |
           set -euxo pipefail
 
@@ -371,37 +372,14 @@ jobs:
             -G DragNDrop \
             -C Release
 
-          echo "Generated packages:"
-
-          find . -maxdepth 2 -type f \
-            \( \
-              -name "*.dmg" \
-              -o \
-              -name "*.pkg" \
-              -o \
-              -name "*.tar.gz" \
-            \) \
-            -print
-
-      - name: Verify DMG
+      # ------------------------------------------------------------
+      # Verify DMG
+      # ------------------------------------------------------------
+      - name: Verify DMG Artifact
         run: |
           set -euxo pipefail
 
-          DMG_COUNT=$(
-            find build \
-              -maxdepth 2 \
-              -type f \
-              -name "*.dmg" \
-              | wc -l \
-              | tr -d ' '
-          )
-
-          if [ "$DMG_COUNT" -eq 0 ]; then
-            echo "ERROR: No DMG was created."
-            exit 1
-          fi
-
-          echo "DMG verification successful:"
+          echo "Looking for DMG..."
 
           find build \
             -maxdepth 2 \
@@ -409,10 +387,25 @@ jobs:
             -name "*.dmg" \
             -print
 
+          DMG_COUNT="$(find build \
+            -maxdepth 2 \
+            -type f \
+            -name "*.dmg" \
+            | wc -l | tr -d ' ')"
+
+          if [ "$DMG_COUNT" -lt 1 ]; then
+            echo "ERROR: No DMG was produced."
+            exit 1
+          fi
+
+          echo "DMG verification successful."
+
+      # ------------------------------------------------------------
+      # Upload DMG
+      # ------------------------------------------------------------
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
-          name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
+          name: Mixxx-2.4.2-macOS-Intel-DMG
           path: build/*.dmg
           if-no-files-found: error
-          retention-days: 7
