@@ -34,7 +34,6 @@ jobs:
           del lines[indexes[0]]
           cmake_file.write_text("".join(lines))
           print("Removed moc_included_test.cpp from mixxx-lib.")
-          print("Kept moc_included_test.cpp in mixxx-test.")
           PY
           grep -n "^[[:space:]]*src/util/moc_included_test.cpp[[:space:]]*$" \
             source_repo/source/CMakeLists.txt
@@ -59,12 +58,10 @@ jobs:
           if marker in text and not text.startswith("// " + marker):
               text = text.replace(marker, "// " + marker, 1)
               target.write_text(text)
-              print("Neutralized #error guard in moc_included_test.cpp")
+              print("Neutralized #error guard.")
           else:
               print("Nothing to neutralize.")
           PY
-          grep -n "mocs_compilation\|error" \
-            source_repo/source/src/util/moc_included_test.cpp || true
 
       - name: Install Compatible CMake
         run: |
@@ -126,7 +123,6 @@ jobs:
             -DBUILD_TESTING=OFF
           cmake --build qtkeychain_build --config Release --parallel 4
           cmake --install qtkeychain_build --config Release
-          find "${QTKEYCHAIN_PREFIX}" -type f -print
 
       - name: Clone Legacy TagLib 1.11.1 Source
         uses: actions/checkout@v4
@@ -151,7 +147,6 @@ jobs:
           set -euxo pipefail
           cmake --build taglib_build --config Release --parallel 4
           cmake --install taglib_build --config Release
-          find "${{ github.workspace }}/taglib_install" -type f -print
 
       - name: Configure Mixxx CMake Project
         run: |
@@ -195,29 +190,88 @@ jobs:
           set -euxo pipefail
           cmake --build build --config Release --parallel 4
 
-      - name: Install Mixxx (creates .app bundle)
+      - name: Install Mixxx
         run: |
           set -euxo pipefail
           cmake --install build --config Release
-          echo "Searching for the .app bundle after install:"
-          find "${{ github.workspace }}/build/install" \
-            -maxdepth 6 -type d -name '*.app' -print
+          echo "=== Top-level contents of build/install ==="
+          ls -la "${{ github.workspace }}/build/install"
+          echo "=== bin/ contents ==="
+          ls -la "${{ github.workspace }}/build/install/bin" || true
 
-      - name: Locate Mixxx.app and export path
+      - name: Assemble Mixxx.app bundle
         run: |
           set -euxo pipefail
-          APP="$(
-            find "${{ github.workspace }}/build/install" \
-              -maxdepth 6 -type d -name 'Mixxx.app' -print -quit
-          )"
-          if [ -z "$APP" ]; then
-            echo "ERROR: Mixxx.app not found after install."
-            echo "Contents of build/install:"
-            find "${{ github.workspace }}/build/install" -maxdepth 4 -print
+          WORKSPACE="${GITHUB_WORKSPACE}"
+          INSTALL_DIR="${WORKSPACE}/build/install"
+          APP="${WORKSPACE}/build/Mixxx.app"
+
+          if [ ! -f "${INSTALL_DIR}/bin/mixxx" ]; then
+            echo "ERROR: ${INSTALL_DIR}/bin/mixxx not found."
+            echo "Contents of ${INSTALL_DIR}/bin:"
+            ls -la "${INSTALL_DIR}/bin" || true
             exit 1
           fi
-          echo "Found Mixxx.app at: $APP"
-          echo "MXXX_APP_PATH=$APP" >> "$GITHUB_ENV"
+
+          rm -rf "$APP"
+          mkdir -p "${APP}/Contents/MacOS"
+          mkdir -p "${APP}/Contents/Resources"
+          mkdir -p "${APP}/Contents/Frameworks"
+
+          cp "${INSTALL_DIR}/bin/mixxx" "${APP}/Contents/MacOS/mixxx"
+          chmod +x "${APP}/Contents/MacOS/mixxx"
+
+          if [ -d "${INSTALL_DIR}/share/mixxx" ]; then
+            cp -R "${INSTALL_DIR}/share/mixxx/." "${APP}/Contents/Resources/"
+          fi
+
+          cat > "${APP}/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key>
+              <string>Mixxx</string>
+              <key>CFBundleDisplayName</key>
+              <string>Mixxx</string>
+              <key>CFBundleIdentifier</key>
+              <string>org.mixxx.Mixxx</string>
+              <key>CFBundleVersion</key>
+              <string>2.4.2</string>
+              <key>CFBundleShortVersionString</key>
+              <string>2.4.2</string>
+              <key>CFBundleExecutable</key>
+              <string>mixxx</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleSignature</key>
+              <string>????</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>10.13</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>NSMicrophoneUsageDescription</key>
+              <string>Mixxx needs microphone access for recording and broadcasting.</string>
+              <key>CFBundleIconFile</key>
+              <string>mixxx.icns</string>
+          </dict>
+          </plist>
+          PLIST
+
+          ICON_SRC="${WORKSPACE}/source_repo/res/images/mixxx.icns"
+          if [ -f "$ICON_SRC" ]; then
+            cp "$ICON_SRC" "${APP}/Contents/Resources/mixxx.icns"
+          else
+            echo "Note: ${ICON_SRC} not found; bundle will use default icon."
+          fi
+
+          echo "=== Mixxx.app layout ==="
+          find "${APP}" -maxdepth 3 -type d -print
+          echo "=== Executable ==="
+          ls -la "${APP}/Contents/MacOS/"
+
+          echo "MXXX_APP_PATH=${APP}" >> "$GITHUB_ENV"
 
       - name: Bundle Qt and Dependencies
         run: |
