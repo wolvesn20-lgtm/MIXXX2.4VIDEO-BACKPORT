@@ -206,62 +206,62 @@ jobs:
       - name: Verify Qt5Keychain Package
         run: |
           set -euxo pipefail
-          QTKEYCHAIN_PREFIX="${{ github.workspace }}/qtkeychain_install"
-          echo "Searching for Qt5Keychain CMake package files:"
-          find "${QTKEYCHAIN_PREFIX}" \
-            -type f \
-            \( \
-              -name "Qt5KeychainConfig.cmake" \
-              -o \
-              -name "qt5keychain-config.cmake" \
-            \) \
-            -print
-          if ! find "${QTKEYCHAIN_PREFIX}" \
-            -type f \
-            \( \
-              -name "Qt5KeychainConfig.cmake" \
-              -o \
-              -name "qt5keychain-config.cmake" \
-            \) \
-            | grep -q .; then
-            echo "ERROR: Qt5Keychain CMake package could not be found."
-            exit 1
-          fi
-
-      - name: Configure Mixxx CMake Project
+          QTKEYCHAIN_PREFIX="${{ github.workspace }}/qtkeychain_install"   
+          
+    - name: Configure Mixxx CMake Project
         run: |
-          set -euxo pipefail
-          rm -rf build
-          QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
-          TAGLIB_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
-          QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
-          export PKG_CONFIG_PATH="${TAGLIB_PREFIX}/lib/pkgconfig"
-          export CMAKE_PREFIX_PATH="${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}"
-          echo "CMAKE_PREFIX_PATH:"
-          echo "$CMAKE_PREFIX_PATH"
-          echo "Qt5:"
-          qmake -v
-          echo "Locating Qt5Keychain CMake package..."
-          QT5KEYCHAIN_CONFIG="$(
-            find "${QTKEYCHAIN_PREFIX}" \
-              -type f \
-              \( \
-                -name "Qt5KeychainConfig.cmake" \
-                -o \
-                -name "qt5keychain-config.cmake" \
-              \) \
-              -print -quit
-          )"
-          if [ -z "$QT5KEYCHAIN_CONFIG" ]; then
-            echo "ERROR: Qt5Keychain CMake package was not found."
-            exit 1
-          fi
-          QT5KEYCHAIN_DIR="$(dirname "$QT5KEYCHAIN_CONFIG")"
-          echo "Qt5Keychain config:"
-          echo "$QT5KEYCHAIN_CONFIG"
-          echo "Qt5Keychain CMake directory:"
-          echo "$QT5KEYCHAIN_DIR"
-          cmake \
+    set -euxo pipefail
+    rm -rf build
+    QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
+    TAGLIB_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
+    QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
+    export PKG_CONFIG_PATH="${TAGLIB_PREFIX}/lib/pkgconfig"
+    export CMAKE_PREFIX_PATH="${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}"
+    echo "CMAKE_PREFIX_PATH:"
+    echo "$CMAKE_PREFIX_PATH"
+    echo "Qt5:"
+    qmake -v
+
+    # Locate swscale dynamically so this doesn't break when Homebrew
+    # bumps the FFmpeg version. Falls back to plain -lswscale if
+    # pkg-config is missing.
+    SWSCALE_LDFLAGS="$(pkg-config --libs libswscale 2>/dev/null || echo '-lswscale')"
+    echo "SWSCALE_LDFLAGS:"
+    echo "$SWSCALE_LDFLAGS"
+
+    echo "Locating Qt5Keychain CMake package..."
+    QT5KEYCHAIN_CONFIG="$(
+      find "${QTKEYCHAIN_PREFIX}" \
+        -type f \
+        \( \
+          -name "Qt5KeychainConfig.cmake" \
+          -o \
+          -name "qt5keychain-config.cmake" \
+        \) \
+        -print -quit
+    )"
+    if [ -z "$QT5KEYCHAIN_CONFIG" ]; then
+      echo "ERROR: Qt5Keychain CMake package was not found."
+      exit 1
+    fi
+    QT5KEYCHAIN_DIR="$(dirname "$QT5KEYCHAIN_CONFIG")"
+    echo "Qt5Keychain config:"
+    echo "$QT5KEYCHAIN_CONFIG"
+    echo "Qt5Keychain CMake directory:"
+    echo "$QT5KEYCHAIN_DIR"
+
+    cmake \
+      -S source_repo/source \
+      -B build \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+      -DCMAKE_EXE_LINKER_FLAGS="-framework AudioToolbox -framework AppKit ${SWSCALE_LDFLAGS}" \
+      -DTESTING=OFF \
+      -DBUILD_TESTING=OFF \
+      -DBUILD_BENCH=OFF \
+      -DOPTIMIZE=portable \
+      -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+      -DQt5Keychain_DIR="$QT5KEYCHAIN_DIR"          cmake \
             -S source_repo/source \
             -B build \
             -DCMAKE_BUILD_TYPE=Release \
