@@ -95,6 +95,20 @@ jobs:
             portaudio hidapi portmidi protobuf rubberband boost taglib \
             cpp-gsl pkg-config
 
+      - name: Install macdeployqt via Homebrew
+        run: |
+          set -euxo pipefail
+          brew install qt@5 || true
+          QTBIN="/usr/local/opt/qt@5/bin"
+          if [ -x "$QTBIN/macdeployqt" ]; then
+            echo "Found macdeployqt at $QTBIN/macdeployqt"
+            echo "$QTBIN" >> "$GITHUB_PATH"
+          else
+            echo "macdeployqt not found in qt@5; searching Homebrew prefix..."
+            find /usr/local -name macdeployqt -type f 2>/dev/null || true
+            exit 1
+          fi
+
       - name: Set Up Qt5 Environment
         uses: jurplel/install-qt-action@v4
         env:
@@ -262,6 +276,74 @@ jobs:
           ICON_SRC="${WORKSPACE}/source_repo/res/images/mixxx.icns"
           if [ -f "$ICON_SRC" ]; then
             cp "$ICON_SRC" "${APP}/Contents/Resources/mixxx.icns"
+          else
+            echo "Note: ${ICON_SRC} not found; bundle will use default icon."
+          fi
+
+          echo "=== Mixxx.app layout ==="
+          find "${APP}" -maxdepth 3 -type d -print
+          echo "=== Executable ==="
+          ls -la "${APP}/Contents/MacOS/"
+
+          echo "MXXX_APP_PATH=${APP}" >> "$GITHUB_ENV"
+
+      - name: Bundle Qt and Dependencies
+        run: |
+          set -euxo pipefail
+          APP="${MXXX_APP_PATH}"
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            echo "ERROR: MXXX_APP_PATH not set or invalid: '$APP'"
+            exit 1
+          fi
+          MACDEPLOYQT="$(command -v macdeployqt || true)"
+          if [ -z "$MACDEPLOYQT" ]; then
+            MACDEPLOYQT="$(find /usr/local -name macdeployqt -type f 2>/dev/null | head -1)"
+          fi
+          if [ -z "$MACDEPLOYQT" ] || [ ! -x "$MACDEPLOYQT" ]; then
+            echo "ERROR: macdeployqt not found anywhere."
+            echo "Searching for it:"
+            find /usr/local -name macdeployqt 2>/dev/null || true
+            find "${{ github.workspace }}/qt" -name macdeployqt 2>/dev/null || true
+            exit 1
+          fi
+          echo "Using macdeployqt: $MACDEPLOYQT"
+          "$MACDEPLOYQT" "$APP" -verbose=2
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Create DMG
+        run: |
+          set -euxo pipefail
+          APP="${MXXX_APP_PATH}"
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            echo "ERROR: MXXX_APP_PATH not set or invalid: '$APP'"
+            exit 1
+          fi
+          OUT="Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg"
+          rm -f "$OUT"
+          create-dmg \
+            --volname "Mixxx 2.4" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --app-drop-link 450 185 \
+            --no-code-sign \
+            "$OUT" \
+            "$APP" || true
+          if [ ! -f "$OUT" ]; then
+            echo "ERROR: DMG was not created."
+            exit 1
+          fi
+          ls -lh "$OUT"
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
+          path: Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg
+          if-no-files-found: error
+          retention-days: 7" "${APP}/Contents/Resources/mixxx.icns"
           else
             echo "Note: ${ICON_SRC} not found; bundle will use default icon."
           fi
