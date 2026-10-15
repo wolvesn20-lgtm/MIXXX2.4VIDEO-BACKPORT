@@ -93,7 +93,7 @@ jobs:
             ffmpeg googletest chromaprint google-benchmark \
             libebur128 fftw libkeyfinder flac libvorbis sound-touch \
             portaudio hidapi portmidi protobuf rubberband boost taglib \
-            cpp-gsl pkg-config
+            cpp-gsl pkg-config dylibbundler
 
       - name: Install macdeployqt via Homebrew
         run: |
@@ -210,8 +210,6 @@ jobs:
           cmake --install build --config Release
           echo "=== Top-level contents of build/install ==="
           ls -la "${{ github.workspace }}/build/install"
-          echo "=== bin/ contents ==="
-          ls -la "${{ github.workspace }}/build/install/bin" || true
 
       - name: Assemble Mixxx.app bundle
         run: |
@@ -222,7 +220,6 @@ jobs:
 
           if [ ! -f "${INSTALL_DIR}/bin/mixxx" ]; then
             echo "ERROR: ${INSTALL_DIR}/bin/mixxx not found."
-            echo "Contents of ${INSTALL_DIR}/bin:"
             ls -la "${INSTALL_DIR}/bin" || true
             exit 1
           fi
@@ -245,30 +242,19 @@ jobs:
             "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              <key>CFBundleName</key>
-              <string>Mixxx</string>
-              <key>CFBundleDisplayName</key>
-              <string>Mixxx</string>
-              <key>CFBundleIdentifier</key>
-              <string>org.mixxx.Mixxx</string>
-              <key>CFBundleVersion</key>
-              <string>2.4.2</string>
-              <key>CFBundleShortVersionString</key>
-              <string>2.4.2</string>
-              <key>CFBundleExecutable</key>
-              <string>mixxx</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>CFBundleSignature</key>
-              <string>????</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>10.13</string>
-              <key>NSHighResolutionCapable</key>
-              <true/>
+              <key>CFBundleName</key><string>Mixxx</string>
+              <key>CFBundleDisplayName</key><string>Mixxx</string>
+              <key>CFBundleIdentifier</key><string>org.mixxx.Mixxx</string>
+              <key>CFBundleVersion</key><string>2.4.2</string>
+              <key>CFBundleShortVersionString</key><string>2.4.2</string>
+              <key>CFBundleExecutable</key><string>mixxx</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>CFBundleSignature</key><string>????</string>
+              <key>LSMinimumSystemVersion</key><string>10.13</string>
+              <key>NSHighResolutionCapable</key><true/>
               <key>NSMicrophoneUsageDescription</key>
               <string>Mixxx needs microphone access for recording and broadcasting.</string>
-              <key>CFBundleIconFile</key>
-              <string>mixxx.icns</string>
+              <key>CFBundleIconFile</key><string>mixxx.icns</string>
           </dict>
           </plist>
           PLIST
@@ -276,18 +262,11 @@ jobs:
           ICON_SRC="${WORKSPACE}/source_repo/res/images/mixxx.icns"
           if [ -f "$ICON_SRC" ]; then
             cp "$ICON_SRC" "${APP}/Contents/Resources/mixxx.icns"
-          else
-            echo "Note: ${ICON_SRC} not found; bundle will use default icon."
           fi
-
-          echo "=== Mixxx.app layout ==="
-          find "${APP}" -maxdepth 3 -type d -print
-          echo "=== Executable ==="
-          ls -la "${APP}/Contents/MacOS/"
 
           echo "MXXX_APP_PATH=${APP}" >> "$GITHUB_ENV"
 
-      - name: Bundle Qt and Dependencies
+      - name: Bundle Qt frameworks with macdeployqt
         run: |
           set -euxo pipefail
           APP="${MXXX_APP_PATH}"
@@ -301,13 +280,95 @@ jobs:
           fi
           if [ -z "$MACDEPLOYQT" ] || [ ! -x "$MACDEPLOYQT" ]; then
             echo "ERROR: macdeployqt not found anywhere."
-            echo "Searching for it:"
             find /usr/local -name macdeployqt 2>/dev/null || true
             find "${{ github.workspace }}/qt" -name macdeployqt 2>/dev/null || true
             exit 1
           fi
           echo "Using macdeployqt: $MACDEPLOYQT"
-          "$MACDEPLOYQT" "$APP" -verbose=2
+          "$MACDEPLOYQT" "$APP" -verbose=2 \
+            -libpath=/usr/local/lib \
+            -libpath=/usr/local/opt/qt@5/lib \
+            -libpath="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib"
+
+      - name: Bundle non-Qt dependencies with dylibbundler
+        run: |
+          set -euxo pipefail
+          APP="${MXXX_APP_PATH}"
+          MACOS_DIR="${APP}/Contents/MacOS"
+          FW_DIR="${APP}/Contents/Frameworks"
+
+          DYLIBBUNDLER="$(command -v dylibbundler || true)"
+          if [ -z "$DYLIBBUNDLER" ]; then
+            echo "ERROR: dylibbundler not found on PATH."
+            exit 1
+          fi
+          echo "Using dylibbundler: $DYLIBBUNDLER"
+
+          # Run for the main executable
+          echo "=== Bundling dependencies for mixxx executable ==="
+          "$DYLIBBUNDLER" \
+            -od -b \
+            -x "${MACOS_DIR}/mixxx" \
+            -d "$FW_DIR" \
+            -p "@executable_path/../Frameworks/" \
+            -s /usr/local/lib \
+            -s /usr/local/opt/ffmpeg/lib \
+            -s /usr/local/opt/taglib/lib \
+            -s /usr/local/opt/protobuf/lib \
+            -s /usr/local/opt/hidapi/lib \
+            -s /usr/local/opt/libusb/lib \
+            -s /usr/local/opt/libogg/lib \
+            -s /usr/local/opt/libvorbis/lib \
+            -s /usr/local/opt/openssl@4/lib \
+            -s /usr/local/opt/rubberband/lib \
+            -s /usr/local/opt/libsndfile/lib \
+            -s /usr/local/opt/sound-touch/lib \
+            -s /usr/local/opt/portaudio/lib \
+            -s /usr/local/opt/portmidi/lib \
+            -s /usr/local/opt/flac/lib \
+            -s /usr/local/opt/libebur128/lib \
+            -s /usr/local/opt/libkeyfinder/lib \
+            -s /usr/local/opt/chromaprint/lib \
+            -s /usr/local/opt/lame/lib \
+            || true
+
+          # Also bundle any non-Qt dylibs that Qt frameworks pulled in
+          echo "=== Recursive pass over Frameworks ==="
+          for lib in "$FW_DIR"/*.dylib; do
+            if [ -f "$lib" ]; then
+              "$DYLIBBUNDLER" \
+                -od -b \
+                -x "$lib" \
+                -d "$FW_DIR" \
+                -p "@executable_path/../Frameworks/" \
+                -s /usr/local/lib \
+                -s /usr/local/opt/ffmpeg/lib \
+                -s /usr/local/opt/taglib/lib \
+                -s /usr/local/opt/protobuf/lib \
+                -s /usr/local/opt/hidapi/lib \
+                -s /usr/local/opt/libusb/lib \
+                -s /usr/local/opt/libogg/lib \
+                -s /usr/local/opt/libvorbis/lib \
+                -s /usr/local/opt/openssl@4/lib \
+                -s /usr/local/opt/rubberband/lib \
+                -s /usr/local/opt/libsndfile/lib \
+                -s /usr/local/opt/sound-touch/lib \
+                -s /usr/local/opt/portaudio/lib \
+                -s /usr/local/opt/portmidi/lib \
+                -s /usr/local/opt/flac/lib \
+                -s /usr/local/opt/libebur128/lib \
+                -s /usr/local/opt/libkeyfinder/lib \
+                -s /usr/local/opt/chromaprint/lib \
+                -s /usr/local/opt/lame/lib \
+                || true
+            fi
+          done
+
+          echo "=== Contents of Frameworks after bundling ==="
+          ls -la "$FW_DIR" | head -50
+
+          echo "=== Verifying no @rpath or /usr/local/Cellar deps remain ==="
+          otool -L "${MACOS_DIR}/mixxx" | grep -E "(Cellar|@rpath)" || echo "(clean)"
 
       - name: Install create-dmg
         run: brew install create-dmg
