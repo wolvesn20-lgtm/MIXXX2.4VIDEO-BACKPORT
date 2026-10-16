@@ -291,85 +291,69 @@ jobs:
             -libpath="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib"
 
       - name: Bundle non-Qt dependencies with dylibbundler
-        run: |
-          set -euxo pipefail
-          APP="${MXXX_APP_PATH}"
-          MACOS_DIR="${APP}/Contents/MacOS"
-          FW_DIR="${APP}/Contents/Frameworks"
+        - name: Bundle non-Qt dependencies with dylibbundler
+  timeout-minutes: 15
+  run: |
+    set -euxo pipefail
+    APP="${MXXX_APP_PATH}"
+    MACOS_DIR="${APP}/Contents/MacOS"
+    FW_DIR="${APP}/Contents/Frameworks"
 
-          DYLIBBUNDLER="$(command -v dylibbundler || true)"
-          if [ -z "$DYLIBBUNDLER" ]; then
-            echo "ERROR: dylibbundler not found on PATH."
-            exit 1
-          fi
-          echo "Using dylibbundler: $DYLIBBUNDLER"
+    DYLIBBUNDLER="$(command -v dylibbundler || true)"
+    if [ -z "$DYLIBBUNDLER" ]; then
+      echo "ERROR: dylibbundler not found on PATH."
+      exit 1
+    fi
+    echo "Using dylibbundler: $DYLIBBUNDLER"
 
-          # Run for the main executable
-          echo "=== Bundling dependencies for mixxx executable ==="
-          "$DYLIBBUNDLER" \
-            -od -b \
-            -x "${MACOS_DIR}/mixxx" \
-            -d "$FW_DIR" \
-            -p "@executable_path/../Frameworks/" \
-            -s /usr/local/lib \
-            -s /usr/local/opt/ffmpeg/lib \
-            -s /usr/local/opt/taglib/lib \
-            -s /usr/local/opt/protobuf/lib \
-            -s /usr/local/opt/hidapi/lib \
-            -s /usr/local/opt/libusb/lib \
-            -s /usr/local/opt/libogg/lib \
-            -s /usr/local/opt/libvorbis/lib \
-            -s /usr/local/opt/openssl@4/lib \
-            -s /usr/local/opt/rubberband/lib \
-            -s /usr/local/opt/libsndfile/lib \
-            -s /usr/local/opt/sound-touch/lib \
-            -s /usr/local/opt/portaudio/lib \
-            -s /usr/local/opt/portmidi/lib \
-            -s /usr/local/opt/flac/lib \
-            -s /usr/local/opt/libebur128/lib \
-            -s /usr/local/opt/libkeyfinder/lib \
-            -s /usr/local/opt/chromaprint/lib \
-            -s /usr/local/opt/lame/lib \
-            || true
+    # Build the search path list once
+    SEARCH_PATHS=(
+      /usr/local/lib
+      /usr/local/opt/ffmpeg/lib
+      /usr/local/opt/taglib/lib
+      /usr/local/opt/protobuf/lib
+      /usr/local/opt/hidapi/lib
+      /usr/local/opt/libusb/lib
+      /usr/local/opt/libogg/lib
+      /usr/local/opt/libvorbis/lib
+      /usr/local/opt/openssl@3/lib
+      /usr/local/opt/openssl@4/lib
+      /usr/local/opt/rubberband/lib
+      /usr/local/opt/libsndfile/lib
+      /usr/local/opt/sound-touch/lib
+      /usr/local/opt/portaudio/lib
+      /usr/local/opt/portmidi/lib
+      /usr/local/opt/flac/lib
+      /usr/local/opt/libebur128/lib
+      /usr/local/opt/libkeyfinder/lib
+      /usr/local/opt/chromaprint/lib
+      /usr/local/opt/lame/lib
+      /usr/local/opt/boost/lib
+      /usr/local/opt/fftw/lib
+    )
 
-          # Also bundle any non-Qt dylibs that Qt frameworks pulled in
-          echo "=== Recursive pass over Frameworks ==="
-          for lib in "$FW_DIR"/*.dylib; do
-            if [ -f "$lib" ]; then
-              "$DYLIBBUNDLER" \
-                -od -b \
-                -x "$lib" \
-                -d "$FW_DIR" \
-                -p "@executable_path/../Frameworks/" \
-                -s /usr/local/lib \
-                -s /usr/local/opt/ffmpeg/lib \
-                -s /usr/local/opt/taglib/lib \
-                -s /usr/local/opt/protobuf/lib \
-                -s /usr/local/opt/hidapi/lib \
-                -s /usr/local/opt/libusb/lib \
-                -s /usr/local/opt/libogg/lib \
-                -s /usr/local/opt/libvorbis/lib \
-                -s /usr/local/opt/openssl@4/lib \
-                -s /usr/local/opt/rubberband/lib \
-                -s /usr/local/opt/libsndfile/lib \
-                -s /usr/local/opt/sound-touch/lib \
-                -s /usr/local/opt/portaudio/lib \
-                -s /usr/local/opt/portmidi/lib \
-                -s /usr/local/opt/flac/lib \
-                -s /usr/local/opt/libebur128/lib \
-                -s /usr/local/opt/libkeyfinder/lib \
-                -s /usr/local/opt/chromaprint/lib \
-                -s /usr/local/opt/lame/lib \
-                || true
-            fi
-          done
+    S_FLAGS=()
+    for p in "${SEARCH_PATHS[@]}"; do
+      if [ -d "$p" ]; then
+        S_FLAGS+=(-s "$p")
+      fi
+    done
 
-          echo "=== Contents of Frameworks after bundling ==="
-          ls -la "$FW_DIR" | head -50
+    echo "=== Running dylibbundler ONCE on the mixxx executable ==="
+    "$DYLIBBUNDLER" \
+      -od -b \
+      -x "${MACOS_DIR}/mixxx" \
+      -d "$FW_DIR" \
+      -p "@executable_path/../Frameworks/" \
+      "${S_FLAGS[@]}"
 
-          echo "=== Verifying no @rpath or /usr/local/Cellar deps remain ==="
-          otool -L "${MACOS_DIR}/mixxx" | grep -E "(Cellar|@rpath)" || echo "(clean)"
+    echo "=== Contents of Frameworks after bundling ==="
+    ls -la "$FW_DIR" | head -60
 
+    echo "=== otool -L on mixxx (looking for Cellar/@rpath leaks) ==="
+    otool -L "${MACOS_DIR}/mixxx" \
+      | grep -E "(Cellar|/usr/local/opt|@rpath)" \
+      || echo "(clean — no Cellar/@rpath references)"
       - name: Install create-dmg
         run: brew install create-dmg
 
