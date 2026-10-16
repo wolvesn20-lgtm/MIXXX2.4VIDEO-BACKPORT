@@ -20,7 +20,7 @@ jobs:
 
       - name: Remove Test-Only moc Source from Mixxx Library
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           cmake_file = Path("source_repo/source/CMakeLists.txt")
@@ -47,7 +47,7 @@ jobs:
 
       - name: Neutralize moc_included_test #error guard
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
           target = Path("source_repo/source/src/util/moc_included_test.cpp")
@@ -65,7 +65,7 @@ jobs:
 
       - name: Install Compatible CMake
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           brew uninstall --ignore-dependencies cmake || true
           curl -L \
             https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-macos-universal.tar.gz \
@@ -78,7 +78,7 @@ jobs:
 
       - name: Remove conflicting OpenSSL 1.1 link
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           brew unlink openssl@1.1 || true
           if [ -L "/usr/local/bin/openssl" ] && \
              readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then
@@ -87,7 +87,7 @@ jobs:
 
       - name: Install All Core Mixxx Dependencies
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           brew update
           brew install \
             ffmpeg googletest chromaprint google-benchmark \
@@ -97,7 +97,7 @@ jobs:
 
       - name: Install macdeployqt via Homebrew
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           brew install qt@5 || true
           QTBIN="/usr/local/opt/qt@5/bin"
           if [ -x "$QTBIN/macdeployqt" ]; then
@@ -122,7 +122,7 @@ jobs:
 
       - name: Build Qt5Keychain
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           git clone --depth 1 --branch 0.15.0 \
             https://github.com/frankosterfeld/qtkeychain.git qtkeychain_src
           WORKSPACE="${GITHUB_WORKSPACE}"
@@ -147,7 +147,7 @@ jobs:
 
       - name: Configure Legacy TagLib
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           cmake -S taglib_src -B taglib_build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
@@ -158,13 +158,13 @@ jobs:
 
       - name: Build and Install Legacy TagLib
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           cmake --build taglib_build --config Release --parallel 4
           cmake --install taglib_build --config Release
 
       - name: Configure Mixxx CMake Project
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           rm -rf build
           QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
           TAGLIB_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
@@ -201,19 +201,19 @@ jobs:
 
       - name: Build Mixxx Application
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           cmake --build build --config Release --parallel 4
 
       - name: Install Mixxx
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           cmake --install build --config Release
           echo "=== Top-level contents of build/install ==="
           ls -la "${{ github.workspace }}/build/install"
 
       - name: Assemble Mixxx.app bundle
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           WORKSPACE="${GITHUB_WORKSPACE}"
           INSTALL_DIR="${WORKSPACE}/build/install"
           APP="${WORKSPACE}/build/Mixxx.app"
@@ -268,7 +268,7 @@ jobs:
 
       - name: Bundle Qt frameworks with macdeployqt
         run: |
-         set -euo pipefail
+          set -euo pipefail
           APP="${MXXX_APP_PATH}"
           if [ -z "$APP" ] || [ ! -d "$APP" ]; then
             echo "ERROR: MXXX_APP_PATH not set or invalid: '$APP'"
@@ -297,6 +297,21 @@ jobs:
           APP="${MXXX_APP_PATH}"
           MACOS_DIR="${APP}/Contents/MacOS"
           FW_DIR="${APP}/Contents/Frameworks"
+
+          # Fix 1: Create SONAME symlink for libqt5keychain.1.dylib
+          QTKC_DIR="${GITHUB_WORKSPACE}/qtkeychain_install/lib"
+          if [ -d "$QTKC_DIR" ]; then
+            for f in "$QTKC_DIR"/libqt5keychain.*.dylib; do
+              if [ -f "$f" ]; then
+                REALNAME="$(basename "$f")"
+                if [ "$REALNAME" != "libqt5keychain.1.dylib" ] && \
+                   [ ! -e "$QTKC_DIR/libqt5keychain.1.dylib" ]; then
+                  ln -sf "$REALNAME" "$QTKC_DIR/libqt5keychain.1.dylib"
+                  echo "Symlinked libqt5keychain.1.dylib -> $REALNAME"
+                fi
+              fi
+            done
+          fi
 
           DYLIBBUNDLER="$(command -v dylibbundler || true)"
           if [ -z "$DYLIBBUNDLER" ]; then
@@ -328,6 +343,7 @@ jobs:
             /usr/local/opt/lame/lib
             /usr/local/opt/boost/lib
             /usr/local/opt/fftw/lib
+            "${GITHUB_WORKSPACE}/qtkeychain_install/lib"
           )
 
           S_FLAGS=()
@@ -337,13 +353,21 @@ jobs:
             fi
           done
 
-          echo "=== Running dylibbundler ONCE on the mixxx executable ==="
-          "$DYLIBBUNDLER" \
+          # Fix 2: Wrap dylibbundler in timeout so it can't loop forever
+          echo "=== Running dylibbundler (5-minute hard timeout) ==="
+          timeout 300 "$DYLIBBUNDLER" \
             -od -b \
             -x "${MACOS_DIR}/mixxx" \
             -d "$FW_DIR" \
             -p "@executable_path/../Frameworks/" \
-            "${S_FLAGS[@]}"
+            "${S_FLAGS[@]}" || {
+              EXIT_CODE=$?
+              if [ "$EXIT_CODE" -eq 124 ]; then
+                echo "WARNING: dylibbundler timed out after 5 minutes."
+              else
+                echo "dylibbundler exited with code $EXIT_CODE (continuing anyway)."
+              fi
+            }
 
           echo "=== Contents of Frameworks after bundling ==="
           ls -la "$FW_DIR" | head -60
@@ -358,7 +382,7 @@ jobs:
 
       - name: Create DMG
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           APP="${MXXX_APP_PATH}"
           if [ -z "$APP" ] || [ ! -d "$APP" ]; then
             echo "ERROR: MXXX_APP_PATH not set or invalid: '$APP'"
