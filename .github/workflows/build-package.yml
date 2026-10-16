@@ -268,7 +268,7 @@ jobs:
 
       - name: Bundle Qt frameworks with macdeployqt
         run: |
-          set -euxo pipefail
+         set -euo pipefail
           APP="${MXXX_APP_PATH}"
           if [ -z "$APP" ] || [ ! -d "$APP" ]; then
             echo "ERROR: MXXX_APP_PATH not set or invalid: '$APP'"
@@ -293,7 +293,7 @@ jobs:
       - name: Bundle non-Qt dependencies with dylibbundler
         timeout-minutes: 15
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           APP="${MXXX_APP_PATH}"
           MACOS_DIR="${APP}/Contents/MacOS"
           FW_DIR="${APP}/Contents/Frameworks"
