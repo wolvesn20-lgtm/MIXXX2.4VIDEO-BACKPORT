@@ -323,7 +323,7 @@ jobs:
           echo "=== Finding and copying all external libraries ==="
           for pass in 1 2 3 4 5; do
             echo "--- Pass $pass ---"
-            otool -L "${MACOS_DIR}/mixxx" "$FW_DIR"/* 2>/dev/null | grep -v ":" | grep -v "@executable_path" | grep -v "@rpath" | grep -v "/System/Library" | grep -v "/usr/lib" | awk '{print $1}' | sort -u > /tmp/deps.txt
+            find "$FW_DIR" -name "*.dylib" -maxdepth 1 -print0 | xargs -0 otool -L "${MACOS_DIR}/mixxx" 2>/dev/null | grep -v ":" | grep -v "@executable_path" | grep -v "@rpath" | grep -v "/System/Library" | grep -v "/usr/lib" | awk '{print $1}' | sort -u > /tmp/deps.txt
             
             COPIED=0
             while read -r lib; do
