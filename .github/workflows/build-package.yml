@@ -93,7 +93,7 @@ jobs:
             ffmpeg googletest chromaprint google-benchmark \
             libebur128 fftw libkeyfinder flac libvorbis sound-touch \
             portaudio hidapi portmidi protobuf rubberband boost taglib \
-            cpp-gsl pkg-config dylibbundler
+            cpp-gsl pkg-config
 
       - name: Install macdeployqt via Homebrew
         run: |
@@ -255,6 +255,151 @@ jobs:
               <key>NSMicrophoneUsageDescription</key>
               <string>Mixxx needs microphone access for recording and broadcasting.</string>
               <key>CFBundleIconFile</key><string>mixxx.icns</string>
+          </dict>
+          </plist>
+          PLIST
+
+          ICON_SRC="${WORKSPACE}/source_repo/res/images/mixxx.icns"
+          if [ -f "$ICON_SRC" ]; then
+            cp "$ICON_SRC" "${APP}/Contents/Resources/mixxx.icns"
+          fi
+
+          echo "MXXX_APP_PATH=${APP}" >> "$GITHUB_ENV"
+
+      - name: Bundle Qt frameworks with macdeployqt
+        run: |
+          set -euo pipefail
+          APP="${MXXX_APP_PATH}"
+          
+          MACDEPLOYQT="$(command -v macdeployqt || true)"
+          if [ -z "$MACDEPLOYQT" ]; then
+            MACDEPLOYQT="$(find /usr/local -name macdeployqt -type f 2>/dev/null | head -1)"
+          fi
+          echo "Using macdeployqt: $MACDEPLOYQT"
+          
+          "$MACDEPLOYQT" "$APP" -verbose=2 \
+            -libpath=/usr/local/lib \
+            -libpath=/usr/local/opt/qt@5/lib \
+            -libpath="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib" || true
+          
+          QTCONCURRENT_SRC="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib/QtConcurrent.framework"
+          QTCONCURRENT_DST="$APP/Contents/Frameworks/QtConcurrent.framework"
+          
+          if [ -d "$QTCONCURRENT_SRC" ] && [ ! -d "$QTCONCURRENT_DST" ]; then
+            echo "Manually copying QtConcurrent.framework..."
+            mkdir -p "$APP/Contents/Frameworks"
+            cp -R "$QTCONCURRENT_SRC" "$QTCONCURRENT_DST"
+          fi
+          
+          install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/mixxx" 2>/dev/null || true
+
+      - name: Force bundle libqt5keychain
+        run: |
+          set -euo pipefail
+          APP="${MXXX_APP_PATH}"
+          FW_DIR="${APP}/Contents/Frameworks"
+          
+          KC_SRC="${{ github.workspace }}/qtkeychain_install/lib/libqt5keychain.0.15.0.dylib"
+          
+          if [ -f "$KC_SRC" ]; then
+            echo "Copying Qt5Keychain into the app bundle..."
+            cp "$KC_SRC" "$FW_DIR/"
+            ln -sf "libqt5keychain.0.15.0.dylib" "$FW_DIR/libqt5keychain.1.dylib"
+            install_name_tool -id "@executable_path/../Frameworks/libqt5keychain.0.15.0.dylib" "$FW_DIR/libqt5keychain.0.15.0.dylib" || true
+            install_name_tool -change "@rpath/libqt5keychain.1.dylib" "@executable_path/../Frameworks/libqt5keychain.1.dylib" "$APP/Contents/MacOS/mixxx" || true
+            echo "Keychain bundled successfully."
+          else
+            echo "ERROR: Could not find $KC_SRC"
+            exit 1
+          fi
+
+      - name: Bundle all dependencies manually
+        run: |
+          set -euo pipefail
+          APP="${MXXX_APP_PATH}"
+          MACOS_DIR="${APP}/Contents/MacOS"
+          FW_DIR="${APP}/Contents/Frameworks"
+          
+          echo "=== Finding and copying all external libraries ==="
+          for pass in 1 2 3 4 5; do
+            echo "--- Pass $pass ---"
+            otool -L "${MACOS_DIR}/mixxx" "$FW_DIR"/* 2>/dev/null | grep -v ":" | grep -v "@executable_path" | grep -v "@rpath" | grep -v "/System/Library" | grep -v "/usr/lib" | awk '{print $1}' | sort -u > /tmp/deps.txt
+            
+            COPIED=0
+            while read -r lib; do
+              [ -z "$lib" ] && continue
+              LIBNAME="$(basename "$lib")"
+              if [ ! -f "$FW_DIR/$LIBNAME" ]; then
+                REAL_LIB="$(readlink -f "$lib" 2>/dev/null || echo "$lib")"
+                if [ -f "$REAL_LIB" ]; then
+                  cp "$REAL_LIB" "$FW_DIR/$LIBNAME"
+                  chmod +w "$FW_DIR/$LIBNAME"
+                  install_name_tool -id "@executable_path/../Frameworks/$LIBNAME" "$FW_DIR/$LIBNAME" 2>/dev/null || true
+                  COPIED=$((COPIED + 1))
+                  echo "Copied: $LIBNAME"
+                fi
+              fi
+            done < /tmp/deps.txt
+            if [ "$COPIED" -eq 0 ]; then
+              break
+            fi
+          done
+          
+          echo "=== Rewriting paths in the mixxx executable ==="
+          otool -L "${MACOS_DIR}/mixxx" | grep -v ":" | grep -v "/System/Library" | grep -v "/usr/lib" | grep -v "@executable_path" | grep -v "@rpath" | awk '{print $1}' | sort -u | while read -r lib; do
+            [ -z "$lib" ] && continue
+            LIBNAME="$(basename "$lib")"
+            install_name_tool -change "$lib" "@executable_path/../Frameworks/$LIBNAME" "${MACOS_DIR}/mixxx" 2>/dev/null || true
+          done
+          
+          echo "=== Rewriting paths in all copied libraries ==="
+          for lib in "$FW_DIR"/*; do
+            if [ -f "$lib" ]; then
+              otool -L "$lib" | grep -v ":" | grep -v "/System/Library" | grep -v "/usr/lib" | grep -v "@executable_path" | grep -v "@rpath" | awk '{print $1}' | sort -u | while read -r dep; do
+                [ -z "$dep" ] && continue
+                DEPNAME="$(basename "$dep")"
+                install_name_tool -change "$dep" "@executable_path/../Frameworks/$DEPNAME" "$lib" 2>/dev/null || true
+              done
+            fi
+          done
+          
+          echo "=== Final otool check on mixxx (should be empty) ==="
+          otool -L "${MACOS_DIR}/mixxx" | grep -E "(Cellar|/usr/local|@rpath)" || echo "(clean)"
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+          APP="${MXXX_APP_PATH}"
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            echo "ERROR: MXXX_APP_PATH not set or invalid: '$APP'"
+            exit 1
+          fi
+          OUT="Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg"
+          rm -f "$OUT"
+          create-dmg \
+            --volname "Mixxx 2.4" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --app-drop-link 450 185 \
+            "$OUT" \
+            "$APP" || true
+          if [ ! -f "$OUT" ]; then
+            echo "ERROR: DMG was not created."
+            exit 1
+          fi
+          ls -lh "$OUT"
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
+          path: Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg
+          if-no-files-found: error
+          retention-days: 7s</string>
           </dict>
           </plist>
           PLIST
