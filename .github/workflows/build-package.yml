@@ -301,21 +301,19 @@ jobs:
           APP="${MXXX_APP_PATH}"
           FW_DIR="${APP}/Contents/Frameworks"
           
-          # Aggressively find ANY qt5keychain dylib in the build directory
-          KC_SRC=$(find "${{ github.workspace }}" -name "libqt5keychain*.dylib" -type f 2>/dev/null | head -n 1)
+          # Find the exact Keychain dylib we built earlier in the qtkeychain_install folder
+          KC_SRC=$(find "${{ github.workspace }}/qtkeychain_install" -name "libqt5keychain*.dylib" -type f 2>/dev/null | head -n 1)
           
           if [ -n "$KC_SRC" ]; then
             echo "Found Qt5Keychain at: $KC_SRC"
-            echo "Copying into app bundle..."
-            cp "$KC_SRC" "$FW_DIR/"
-            ln -sf "$(basename "$KC_SRC")" "$FW_DIR/libqt5keychain.1.dylib"
+            echo "Copying into app bundle as libqt5keychain.1.dylib..."
+            cp "$KC_SRC" "$FW_DIR/libqt5keychain.1.dylib"
             
-            # Fix internal ID and external references
-            install_name_tool -id "@executable_path/../Frameworks/libqt5keychain.1.dylib" "$FW_DIR/$(basename "$KC_SRC")" || true
+            # Fix the binary to look for this new file
             install_name_tool -change "@rpath/libqt5keychain.1.dylib" "@executable_path/../Frameworks/libqt5keychain.1.dylib" "$APP/Contents/MacOS/mixxx" || true
             echo "Keychain bundled successfully."
           else
-            echo "ERROR: Could not find any libqt5keychain*.dylib in the workspace!"
+            echo "ERROR: Could not find any libqt5keychain*.dylib in qtkeychain_install!"
             exit 1
           fi
 
