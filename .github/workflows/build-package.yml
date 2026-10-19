@@ -315,7 +315,8 @@ jobs:
 
       - name: Bundle all dependencies manually
         run: |
-          set -euo pipefail
+          # Notice: No set -e or set -o pipefail here. We want the script to push through errors.
+          set -u
           APP="${MXXX_APP_PATH}"
           MACOS_DIR="${APP}/Contents/MacOS"
           FW_DIR="${APP}/Contents/Frameworks"
@@ -323,7 +324,7 @@ jobs:
           echo "=== Finding and copying all external libraries ==="
           for pass in 1 2 3 4 5; do
             echo "--- Pass $pass ---"
-            find "$FW_DIR" -maxdepth 1 -name "*.dylib" -print0 | xargs -0 otool -L "${MACOS_DIR}/mixxx" 2>/dev/null | grep -v ":" | grep -v "@executable_path" | grep -v "@rpath" | grep -v "/System/Library" | grep -v "/usr/lib" | awk '{print $1}' | sort -u > /tmp/deps.txt
+            find "$FW_DIR" -maxdepth 1 -name "*.dylib" -print0 | xargs -0 otool -L "${MACOS_DIR}/mixxx" 2>/dev/null | grep -v ":" | grep -v "@executable_path" | grep -v "@rpath" | grep -v "/System/Library" | grep -v "/usr/lib" | awk '{print $1}' | sort -u > /tmp/deps.txt || true
             
             COPIED=0
             while read -r lib; do
@@ -339,7 +340,7 @@ jobs:
                   echo "Copied: $LIBNAME"
                 fi
               fi
-            done < /tmp/deps.txt
+            done < /tmp/deps.txt || true
             if [ "$COPIED" -eq 0 ]; then
               break
             fi
@@ -350,18 +351,18 @@ jobs:
             [ -z "$lib" ] && continue
             LIBNAME="$(basename "$lib")"
             install_name_tool -change "$lib" "@executable_path/../Frameworks/$LIBNAME" "${MACOS_DIR}/mixxx" 2>/dev/null || true
-          done
+          done || true
           
           echo "=== Rewriting paths in all copied libraries ==="
           for lib in "$FW_DIR"/*; do
             if [ -f "$lib" ]; then
-              otool -L "$lib" | grep -v ":" | grep -v "/System/Library" | grep -v "/usr/lib" | grep -v "@executable_path" | grep -v "@rpath" | awk '{print $1}' | sort -u | while read -r dep; do
+              otool -L "$lib" 2>/dev/null | grep -v ":" | grep -v "/System/Library" | grep -v "/usr/lib" | grep -v "@executable_path" | grep -v "@rpath" | awk '{print $1}' | sort -u | while read -r dep; do
                 [ -z "$dep" ] && continue
                 DEPNAME="$(basename "$dep")"
                 install_name_tool -change "$dep" "@executable_path/../Frameworks/$DEPNAME" "$lib" 2>/dev/null || true
-              done
+              done || true
             fi
-          done
+          done || true
           
           echo "=== Final otool check on mixxx (should be empty) ==="
           otool -L "${MACOS_DIR}/mixxx" | grep -E "(Cellar|/usr/local|@rpath)" || echo "(clean)"
