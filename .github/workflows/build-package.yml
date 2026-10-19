@@ -285,10 +285,12 @@ jobs:
           QTCONCURRENT_SRC="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib/QtConcurrent.framework"
           QTCONCURRENT_DST="$APP/Contents/Frameworks/QtConcurrent.framework"
           
-          if [ -d "$QTCONCURRENT_SRC" ] && [ ! -d "$QTCONCURRENT_DST" ]; then
+          if [ -d "$QTCONCURRENT_SRC" ]; then
             echo "Manually copying QtConcurrent.framework..."
             mkdir -p "$APP/Contents/Frameworks"
             cp -R "$QTCONCURRENT_SRC" "$QTCONCURRENT_DST"
+            install_name_tool -id "@rpath/QtConcurrent.framework/Versions/5/QtConcurrent" "$QTCONCURRENT_DST/Versions/5/QtConcurrent" || true
+            install_name_tool -change "@rpath/QtConcurrent.framework/Versions/5/QtConcurrent" "@executable_path/../Frameworks/QtConcurrent.framework/Versions/5/QtConcurrent" "$APP/Contents/MacOS/mixxx" || true
           fi
           
           install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/mixxx" 2>/dev/null || true
@@ -299,23 +301,26 @@ jobs:
           APP="${MXXX_APP_PATH}"
           FW_DIR="${APP}/Contents/Frameworks"
           
-          KC_SRC="${{ github.workspace }}/qtkeychain_install/lib/libqt5keychain.0.15.0.dylib"
+          # Aggressively find ANY qt5keychain dylib in the build directory
+          KC_SRC=$(find "${{ github.workspace }}" -name "libqt5keychain*.dylib" -type f 2>/dev/null | head -n 1)
           
-          if [ -f "$KC_SRC" ]; then
-            echo "Copying Qt5Keychain into the app bundle..."
+          if [ -n "$KC_SRC" ]; then
+            echo "Found Qt5Keychain at: $KC_SRC"
+            echo "Copying into app bundle..."
             cp "$KC_SRC" "$FW_DIR/"
-            ln -sf "libqt5keychain.0.15.0.dylib" "$FW_DIR/libqt5keychain.1.dylib"
-            install_name_tool -id "@executable_path/../Frameworks/libqt5keychain.0.15.0.dylib" "$FW_DIR/libqt5keychain.0.15.0.dylib" || true
+            ln -sf "$(basename "$KC_SRC")" "$FW_DIR/libqt5keychain.1.dylib"
+            
+            # Fix internal ID and external references
+            install_name_tool -id "@executable_path/../Frameworks/libqt5keychain.1.dylib" "$FW_DIR/$(basename "$KC_SRC")" || true
             install_name_tool -change "@rpath/libqt5keychain.1.dylib" "@executable_path/../Frameworks/libqt5keychain.1.dylib" "$APP/Contents/MacOS/mixxx" || true
             echo "Keychain bundled successfully."
           else
-            echo "ERROR: Could not find $KC_SRC"
+            echo "ERROR: Could not find any libqt5keychain*.dylib in the workspace!"
             exit 1
           fi
 
       - name: Bundle all dependencies manually
         run: |
-          # Notice: No set -e or set -o pipefail here. We want the script to push through errors.
           set -u
           APP="${MXXX_APP_PATH}"
           MACOS_DIR="${APP}/Contents/MacOS"
