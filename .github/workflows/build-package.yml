@@ -285,12 +285,10 @@ jobs:
           QTCONCURRENT_SRC="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib/QtConcurrent.framework"
           QTCONCURRENT_DST="$APP/Contents/Frameworks/QtConcurrent.framework"
           
-          if [ -d "$QTCONCURRENT_SRC" ]; then
+          if [ -d "$QTCONCURRENT_SRC" ] && [ ! -d "$QTCONCURRENT_DST" ]; then
             echo "Manually copying QtConcurrent.framework..."
             mkdir -p "$APP/Contents/Frameworks"
             cp -R "$QTCONCURRENT_SRC" "$QTCONCURRENT_DST"
-            install_name_tool -id "@rpath/QtConcurrent.framework/Versions/5/QtConcurrent" "$QTCONCURRENT_DST/Versions/5/QtConcurrent" || true
-            install_name_tool -change "@rpath/QtConcurrent.framework/Versions/5/QtConcurrent" "@executable_path/../Frameworks/QtConcurrent.framework/Versions/5/QtConcurrent" "$APP/Contents/MacOS/mixxx" || true
           fi
           
           install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/mixxx" 2>/dev/null || true
@@ -301,21 +299,39 @@ jobs:
           APP="${MXXX_APP_PATH}"
           FW_DIR="${APP}/Contents/Frameworks"
           
-          # Find the exact Keychain dylib we built earlier in the qtkeychain_install folder
-          KC_SRC=$(find "${{ github.workspace }}/qtkeychain_install" -name "libqt5keychain*.dylib" -type f 2>/dev/null | head -n 1)
+          KC_SRC="${{ github.workspace }}/qtkeychain_install/lib/libqt5keychain.0.15.0.dylib"
           
-          if [ -n "$KC_SRC" ]; then
-            echo "Found Qt5Keychain at: $KC_SRC"
-            echo "Copying into app bundle as libqt5keychain.1.dylib..."
-            cp "$KC_SRC" "$FW_DIR/libqt5keychain.1.dylib"
-            
-            # Fix the binary to look for this new file
+          if [ -f "$KC_SRC" ]; then
+            echo "Copying Qt5Keychain into the app bundle..."
+            cp "$KC_SRC" "$FW_DIR/"
+            ln -sf "libqt5keychain.0.15.0.dylib" "$FW_DIR/libqt5keychain.1.dylib"
+            install_name_tool -id "@executable_path/../Frameworks/libqt5keychain.0.15.0.dylib" "$FW_DIR/libqt5keychain.0.15.0.dylib" || true
             install_name_tool -change "@rpath/libqt5keychain.1.dylib" "@executable_path/../Frameworks/libqt5keychain.1.dylib" "$APP/Contents/MacOS/mixxx" || true
             echo "Keychain bundled successfully."
           else
-            echo "ERROR: Could not find any libqt5keychain*.dylib in qtkeychain_install!"
+            echo "ERROR: Could not find $KC_SRC"
             exit 1
           fi
+
+      - name: Force bundle Protobuf and Abseil
+        run: |
+          set -euo pipefail
+          APP="${MXXX_APP_PATH}"
+          FW_DIR="${APP}/Contents/Frameworks"
+          
+          echo "Copying Protobuf and Abseil libraries..."
+          # Find and copy all dylibs from Protobuf and Abseil Cellars
+          find /usr/local/Cellar/protobuf -name "*.dylib" -exec cp {} "$FW_DIR/" \; 2>/dev/null || true
+          find /usr/local/Cellar/abseil -name "*.dylib" -exec cp {} "$FW_DIR/" \; 2>/dev/null || true
+          
+          echo "Fixing Protobuf to look for Abseil in the local Frameworks folder..."
+          for pb_lib in "$FW_DIR"/libprotobuf*.dylib; do
+            if [ -f "$pb_lib" ]; then
+              otool -L "$pb_lib" | grep "@rpath/libutf8_validity" | awk '{print $1}' | while read -r missing_lib; do
+                install_name_tool -change "$missing_lib" "@executable_path/../Frameworks/$(basename "$missing_lib")" "$pb_lib" || true
+              done
+            fi
+          done
 
       - name: Bundle all dependencies manually
         run: |
