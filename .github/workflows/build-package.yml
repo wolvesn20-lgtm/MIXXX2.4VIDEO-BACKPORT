@@ -89,8 +89,11 @@ jobs:
         run: |
           set -euo pipefail
           brew update
+          # Use ffmpeg@4 for better macOS 10.13 compatibility (no CVBufferCopyAttachments)
+          brew install ffmpeg@4
+          brew link --force ffmpeg@4
           brew install \
-            ffmpeg googletest chromaprint google-benchmark \
+            googletest chromaprint google-benchmark \
             libebur128 fftw libkeyfinder flac libvorbis sound-touch \
             portaudio hidapi portmidi protobuf rubberband boost taglib \
             cpp-gsl pkg-config
@@ -191,7 +194,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/build/install" \
-            -DCMAKE_EXE_LINKER_FLAGS="-framework AudioToolbox -framework AppKit ${SWSCALE_LDFLAGS}" \
+            -DCMAKE_EXE_LINKER_FLAGS="-framework AudioToolbox -framework AppKit -framework CoreVideo -framework CoreMedia ${SWSCALE_LDFLAGS}" \
             -DTESTING=OFF \
             -DBUILD_TESTING=OFF \
             -DBUILD_BENCH=OFF \
