@@ -319,16 +319,22 @@ jobs:
           APP="${MXXX_APP_PATH}"
           FW_DIR="${APP}/Contents/Frameworks"
           
-          echo "Copying Protobuf and Abseil libraries..."
-          # Find and copy all dylibs from Protobuf and Abseil Cellars
-          find /usr/local/Cellar/protobuf -name "*.dylib" -exec cp {} "$FW_DIR/" \; 2>/dev/null || true
-          find /usr/local/Cellar/abseil -name "*.dylib" -exec cp {} "$FW_DIR/" \; 2>/dev/null || true
+          echo "Hunting down Protobuf and Abseil everywhere..."
           
-          echo "Fixing Protobuf to look for Abseil in the local Frameworks folder..."
+          # Aggressively find all abseil and protobuf files in the entire brew prefix
+          find /usr/local/Cellar -type f -name "*.dylib" | grep -i -E "(absl|protobuf)" | while read -r lib; do
+            LIBNAME=$(basename "$lib")
+            echo "Copying $LIBNAME..."
+            cp "$lib" "$FW_DIR/" || true
+            install_name_tool -id "@executable_path/../Frameworks/$LIBNAME" "$FW_DIR/$LIBNAME" || true
+          done
+
+          # Specifically fix the libprotobuf linking
           for pb_lib in "$FW_DIR"/libprotobuf*.dylib; do
             if [ -f "$pb_lib" ]; then
-              otool -L "$pb_lib" | grep "@rpath/libutf8_validity" | awk '{print $1}' | while read -r missing_lib; do
-                install_name_tool -change "$missing_lib" "@executable_path/../Frameworks/$(basename "$missing_lib")" "$pb_lib" || true
+              otool -L "$pb_lib" | grep "@rpath" | awk '{print $1}' | while read -r missing_lib; do
+                LIBNAME=$(basename "$missing_lib")
+                install_name_tool -change "$missing_lib" "@executable_path/../Frameworks/$LIBNAME" "$pb_lib" || true
               done
             fi
           done
