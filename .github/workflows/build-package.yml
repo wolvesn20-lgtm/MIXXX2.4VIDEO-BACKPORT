@@ -19,24 +19,40 @@ jobs:
           submodules: recursive
           path: source_repo
 
+      - name: Locate helper scripts
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/scripts"
+          for f in finalize_bundle.py check_sdk_symbols.py; do
+            found="$(find source_repo -maxdepth 3 -name "$f" \
+              -not -path 'source_repo/source/*' -not -path 'source_repo/.git/*' | head -1)"
+            if [ -z "$found" ]; then
+              echo "::error::$f is not in the repository. Commit it to .github/scripts/."
+              exit 1
+            fi
+            echo "$f found at $found"
+            cp "$found" "$RUNNER_TEMP/scripts/$f"
+          done
+          echo "SCRIPTS_DIR=$RUNNER_TEMP/scripts" >> "$GITHUB_ENV"
+
       - name: Restore macOS 10.13 dependencies
         id: deps-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/deps-1013
-          key: deps-1013-v2-${{ runner.os }}-${{ hashFiles('source_repo/triplets/*.cmake', 'source_repo/vcpkg-ports.txt') }}
+          key: deps-1013-v3-${{ runner.os }}-${{ hashFiles('source_repo/triplets/*.cmake', 'source_repo/vcpkg-ports.txt') }}
 
       - name: Build dependencies for macOS 10.13
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           set -f
-          
+
           brew install nasm pkg-config autoconf automake libtool
-          
+
           git clone --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
           "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
-          
+
           PORTS=$(grep -v '^[[:space:]]*#' source_repo/vcpkg-ports.txt | grep -v '^[[:space:]]*$' | tr '\n' ' ')
           "$RUNNER_TEMP/vcpkg/vcpkg" install $PORTS \
             --overlay-triplets="$PWD/source_repo/triplets" \
@@ -44,9 +60,9 @@ jobs:
             --x-install-root="$PWD/deps-1013" \
             --x-buildtrees-root="$RUNNER_TEMP/vcpkg-buildtrees" \
             --clean-after-build
-            
+
           DEPS="$PWD/deps-1013/x64-osx-min1013-release"
-          
+
           git clone --depth 1 --branch v21.12 \
             https://github.com/protocolbuffers/protobuf.git "$RUNNER_TEMP/protobuf"
           cmake -S "$RUNNER_TEMP/protobuf/cmake" -B "$RUNNER_TEMP/protobuf/build" \
@@ -54,13 +70,14 @@ jobs:
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_INSTALL_RPATH=@loader_path/../lib \
             -Dprotobuf_BUILD_SHARED_LIBS=ON \
             -Dprotobuf_BUILD_TESTS=OFF \
             -Dprotobuf_WITH_ZLIB=OFF \
             -DCMAKE_INSTALL_PREFIX="$DEPS"
           cmake --build "$RUNNER_TEMP/protobuf/build" --parallel
           cmake --install "$RUNNER_TEMP/protobuf/build"
-          
+
           git clone --depth 1 --branch 2.2.8 \
             https://github.com/mixxxdj/libkeyfinder.git "$RUNNER_TEMP/libkeyfinder"
           cmake -S "$RUNNER_TEMP/libkeyfinder" -B "$RUNNER_TEMP/libkeyfinder/build" \
@@ -74,6 +91,19 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$DEPS"
           cmake --build "$RUNNER_TEMP/libkeyfinder/build" --parallel
           cmake --install "$RUNNER_TEMP/libkeyfinder/build"
+
+      - name: Check every dependency really targets macOS 10.13
+        run: |
+          python3 "$SCRIPTS_DIR/finalize_bundle.py" \
+            --scan-dir "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
+            --min-macos 10.13
+
+      - name: Save macOS 10.13 dependencies
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/deps-1013
+          key: deps-1013-v3-${{ runner.os }}-${{ hashFiles('source_repo/triplets/*.cmake', 'source_repo/vcpkg-ports.txt') }}
 
       - name: Restore macOS 10.13 SDK
         id: sdk-cache
@@ -103,7 +133,7 @@ jobs:
 
       - name: Check dependency symbols against the macOS 10.13 SDK
         run: |
-          python3 source_repo/github/scripts/check_sdk_symbols.py \
+          python3 "$SCRIPTS_DIR/check_sdk_symbols.py" \
             --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" \
             "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib"
 
@@ -225,6 +255,26 @@ jobs:
           cmake --build qtkeychain_build --config Release --parallel 4
           cmake --install qtkeychain_build --config Release
 
+      - name: Checkout TagLib 1.11.1
+        uses: actions/checkout@v4
+        with:
+          repository: taglib/taglib
+          ref: v1.11.1
+          path: taglib_src
+
+      - name: Build TagLib
+        run: |
+          set -euo pipefail
+          cmake -S taglib_src -B taglib_build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_TESTS=OFF \
+            -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
+          cmake --build taglib_build --config Release --parallel 4
+          cmake --install taglib_build --config Release
+
       - name: Configure Mixxx CMake Project
         run: |
           set -euo pipefail
@@ -232,8 +282,9 @@ jobs:
           DEPS="$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release"
           QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
           QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
-          export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-          export CMAKE_PREFIX_PATH="$DEPS;${QT_PREFIX};${QTKEYCHAIN_PREFIX}"
+          TAGLIB_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
+          export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/share/pkgconfig:${TAGLIB_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          export CMAKE_PREFIX_PATH="$DEPS;${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}"
           qmake -v
 
           QT5KEYCHAIN_CONFIG="$(
@@ -340,13 +391,14 @@ jobs:
           
           "$MACDEPLOYQT" "$APP" -verbose=2 \
             -libpath="$DEPS/lib" \
+            -libpath="${{ github.workspace }}/qtkeychain_install/lib" \
             -libpath=/usr/local/lib \
             -libpath=/usr/local/opt/qt@5/lib \
             -libpath="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib" || true
 
       - name: Finalize bundle using strict 10.13 validation
         run: |
-          python3 source_repo/github/scripts/finalize_bundle.py "$MXXX_APP_PATH" \
+          python3 "$SCRIPTS_DIR/finalize_bundle.py" "$MXXX_APP_PATH" \
             --qt-dir "${{ github.workspace }}/qt/Qt/5.15.2/macos" \
             --search "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
             --search "${GITHUB_WORKSPACE}/qtkeychain_install/lib" \
@@ -354,7 +406,7 @@ jobs:
 
       - name: Final symbol check against the macOS 10.13 SDK
         run: |
-          python3 source_repo/github/scripts/check_sdk_symbols.py \
+          python3 "$SCRIPTS_DIR/check_sdk_symbols.py" \
             --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" "$MXXX_APP_PATH"
 
       - name: Install create-dmg
