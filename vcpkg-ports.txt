@@ -1,0 +1,11 @@
+ffmpeg[core,avcodec,avformat,swresample,swscale]
+chromaprint
+libebur128
+fftw3
+flac
+libvorbis
+soundtouch
+portaudio
+hidapi
+portmidi
+rubberband
