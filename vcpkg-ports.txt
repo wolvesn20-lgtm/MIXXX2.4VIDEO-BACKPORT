@@ -2,7 +2,7 @@ ffmpeg[core,avcodec,avformat,swresample,swscale]
 chromaprint
 libebur128
 fftw3
-flac
+libflac
 libvorbis
 soundtouch
 portaudio
