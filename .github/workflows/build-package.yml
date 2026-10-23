@@ -10,6 +10,7 @@ on:
 jobs:
   build-macos-intel:
     runs-on: macos-15-intel
+    timeout-minutes: 360
 
     steps:
       - name: Checkout Primary Repository Code
@@ -17,6 +18,100 @@ jobs:
         with:
           submodules: recursive
           path: source_repo
+
+      - name: Restore macOS 10.13 dependencies
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/deps-1013
+          key: deps-1013-v2-${{ runner.os }}-${{ hashFiles('triplets/*.cmake', 'vcpkg-ports.txt') }}
+
+      - name: Build dependencies for macOS 10.13
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          set -f
+          
+          brew install nasm pkg-config autoconf automake libtool
+          
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          
+          PORTS=$(grep -v '^[[:space:]]*#' vcpkg-ports.txt | grep -v '^[[:space:]]*$' | tr '\n' ' ')
+          "$RUNNER_TEMP/vcpkg/vcpkg" install $PORTS \
+            --overlay-triplets="$PWD/triplets" \
+            --triplet x64-osx-min1013-release \
+            --x-install-root="$PWD/deps-1013" \
+            --x-buildtrees-root="$RUNNER_TEMP/vcpkg-buildtrees" \
+            --clean-after-build
+            
+          DEPS="$PWD/deps-1013/x64-osx-min1013-release"
+          
+          git clone --depth 1 --branch v21.12 \
+            https://github.com/protocolbuffers/protobuf.git "$RUNNER_TEMP/protobuf"
+          cmake -S "$RUNNER_TEMP/protobuf/cmake" -B "$RUNNER_TEMP/protobuf/build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -Dprotobuf_BUILD_SHARED_LIBS=ON \
+            -Dprotobuf_BUILD_TESTS=OFF \
+            -Dprotobuf_WITH_ZLIB=OFF \
+            -DCMAKE_INSTALL_PREFIX="$DEPS"
+          cmake --build "$RUNNER_TEMP/protobuf/build" --parallel
+          cmake --install "$RUNNER_TEMP/protobuf/build"
+          
+          git clone --depth 1 --branch 2.2.8 \
+            https://github.com/mixxxdj/libkeyfinder.git "$RUNNER_TEMP/libkeyfinder"
+          cmake -S "$RUNNER_TEMP/libkeyfinder" -B "$RUNNER_TEMP/libkeyfinder/build" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON \
+            -DBUILD_TESTING=OFF \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_PREFIX_PATH="$DEPS" \
+            -DCMAKE_INSTALL_PREFIX="$DEPS"
+          cmake --build "$RUNNER_TEMP/libkeyfinder/build" --parallel
+          cmake --install "$RUNNER_TEMP/libkeyfinder/build"
+
+      - name: Check every dependency really targets macOS 10.13
+        run: |
+          python3 .github/scripts/finalize_bundle.py \
+            --scan-dir "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
+            --min-macos 10.13
+
+      - name: Restore macOS 10.13 SDK
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/MacOSX10.13.sdk
+          key: macosx-1013-sdk-v1
+
+      - name: Download macOS 10.13 SDK
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        env:
+          SDK_1013_URL: ${{ vars.SDK_1013_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sdk-dl" && cd "$RUNNER_TEMP/sdk-dl"
+          urls="${SDK_1013_URL:-} https://github.com/phracker/MacOSX-SDKs/releases/download/11.3/MacOSX10.13.sdk.tar.xz https://github.com/phracker/MacOSX-SDKs/releases/download/10.15/MacOSX10.13.sdk.tar.xz"
+          for url in $urls; do
+            if curl -fsSL --retry 3 -o sdk.tar.xz "$url"; then break; fi
+            rm -f sdk.tar.xz
+          done
+          if [ ! -s sdk.tar.xz ]; then
+            echo "::error::Could not download the macOS 10.13 SDK. Set the repository variable SDK_1013_URL to a tarball that contains MacOSX10.13.sdk."
+            exit 1
+          fi
+          tar -xf sdk.tar.xz
+          mv MacOSX10.13.sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk"
+
+      - name: Check dependency symbols against the macOS 10.13 SDK
+        run: |
+          python3 .github/scripts/check_sdk_symbols.py \
+            --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" \
+            "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib"
 
       - name: Remove Test-Only moc Source from Mixxx Library
         run: |
@@ -85,18 +180,13 @@ jobs:
             rm -f "/usr/local/bin/openssl"
           fi
 
-      - name: Install All Core Mixxx Dependencies
+      - name: Install Remaining Core Mixxx Dependencies
         run: |
           set -euo pipefail
           brew update
-          # Use ffmpeg@4 for better macOS 10.13 compatibility (no CVBufferCopyAttachments)
-          brew install ffmpeg@4
-          brew link --force ffmpeg@4
           brew install \
-            googletest chromaprint google-benchmark \
-            libebur128 fftw libkeyfinder flac libvorbis sound-touch \
-            portaudio hidapi portmidi protobuf rubberband boost taglib \
-            cpp-gsl pkg-config
+            googletest google-benchmark \
+            boost cpp-gsl pkg-config
 
       - name: Install macdeployqt via Homebrew
         run: |
@@ -141,43 +231,16 @@ jobs:
           cmake --build qtkeychain_build --config Release --parallel 4
           cmake --install qtkeychain_build --config Release
 
-      - name: Clone Legacy TagLib 1.11.1 Source
-        uses: actions/checkout@v4
-        with:
-          repository: taglib/taglib
-          ref: v1.11.1
-          path: taglib_src
-
-      - name: Configure Legacy TagLib
-        run: |
-          set -euo pipefail
-          cmake -S taglib_src -B taglib_build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DBUILD_TESTS=OFF \
-            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/taglib_install"
-
-      - name: Build and Install Legacy TagLib
-        run: |
-          set -euo pipefail
-          cmake --build taglib_build --config Release --parallel 4
-          cmake --install taglib_build --config Release
-
       - name: Configure Mixxx CMake Project
         run: |
           set -euo pipefail
           rm -rf build
+          DEPS="$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release"
           QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
-          TAGLIB_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
           QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
-          export PKG_CONFIG_PATH="${TAGLIB_PREFIX}/lib/pkgconfig"
-          export CMAKE_PREFIX_PATH="${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}"
+          export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          export CMAKE_PREFIX_PATH="$DEPS;${QT_PREFIX};${QTKEYCHAIN_PREFIX}"
           qmake -v
-
-          SWSCALE_LDFLAGS="$(pkg-config --libs libswscale 2>/dev/null || echo '-lswscale')"
-          echo "SWSCALE_LDFLAGS: $SWSCALE_LDFLAGS"
 
           QT5KEYCHAIN_CONFIG="$(
             find "${QTKEYCHAIN_PREFIX}" -type f \
@@ -194,7 +257,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/build/install" \
-            -DCMAKE_EXE_LINKER_FLAGS="-framework AudioToolbox -framework AppKit -framework CoreVideo -framework CoreMedia ${SWSCALE_LDFLAGS}" \
+            -DCMAKE_EXE_LINKER_FLAGS="-framework AudioToolbox -framework AppKit -framework CoreVideo -framework CoreMedia" \
             -DTESTING=OFF \
             -DBUILD_TESTING=OFF \
             -DBUILD_BENCH=OFF \
@@ -273,6 +336,7 @@ jobs:
         run: |
           set -euo pipefail
           APP="${MXXX_APP_PATH}"
+          DEPS="$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release"
           
           MACDEPLOYQT="$(command -v macdeployqt || true)"
           if [ -z "$MACDEPLOYQT" ]; then
@@ -281,119 +345,23 @@ jobs:
           echo "Using macdeployqt: $MACDEPLOYQT"
           
           "$MACDEPLOYQT" "$APP" -verbose=2 \
+            -libpath="$DEPS/lib" \
             -libpath=/usr/local/lib \
             -libpath=/usr/local/opt/qt@5/lib \
             -libpath="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib" || true
-          
-          QTCONCURRENT_SRC="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib/QtConcurrent.framework"
-          QTCONCURRENT_DST="$APP/Contents/Frameworks/QtConcurrent.framework"
-          
-          if [ -d "$QTCONCURRENT_SRC" ] && [ ! -d "$QTCONCURRENT_DST" ]; then
-            echo "Manually copying QtConcurrent.framework..."
-            mkdir -p "$APP/Contents/Frameworks"
-            cp -R "$QTCONCURRENT_SRC" "$QTCONCURRENT_DST"
-          fi
-          
-          install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/mixxx" 2>/dev/null || true
 
-      - name: Force bundle libqt5keychain
+      - name: Finalize bundle using strict 10.13 validation
         run: |
-          set -euo pipefail
-          APP="${MXXX_APP_PATH}"
-          FW_DIR="${APP}/Contents/Frameworks"
-          
-          KC_SRC="${{ github.workspace }}/qtkeychain_install/lib/libqt5keychain.0.15.0.dylib"
-          
-          if [ -f "$KC_SRC" ]; then
-            echo "Copying Qt5Keychain into the app bundle..."
-            cp "$KC_SRC" "$FW_DIR/"
-            ln -sf "libqt5keychain.0.15.0.dylib" "$FW_DIR/libqt5keychain.1.dylib"
-            install_name_tool -id "@executable_path/../Frameworks/libqt5keychain.0.15.0.dylib" "$FW_DIR/libqt5keychain.0.15.0.dylib" || true
-            install_name_tool -change "@rpath/libqt5keychain.1.dylib" "@executable_path/../Frameworks/libqt5keychain.1.dylib" "$APP/Contents/MacOS/mixxx" || true
-            echo "Keychain bundled successfully."
-          else
-            echo "ERROR: Could not find $KC_SRC"
-            exit 1
-          fi
+          python3 .github/scripts/finalize_bundle.py "$MXXX_APP_PATH" \
+            --qt-dir "${{ github.workspace }}/qt/Qt/5.15.2/macos" \
+            --search "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
+            --search "${GITHUB_WORKSPACE}/qtkeychain_install/lib" \
+            --min-macos 10.13
 
-      - name: Force bundle Protobuf and Abseil
+      - name: Final symbol check against the macOS 10.13 SDK
         run: |
-          set -euo pipefail
-          APP="${MXXX_APP_PATH}"
-          FW_DIR="${APP}/Contents/Frameworks"
-          
-          echo "Hunting down Protobuf and Abseil everywhere..."
-          
-          # Aggressively find all abseil and protobuf files in the entire brew prefix
-          find /usr/local/Cellar -type f -name "*.dylib" | grep -i -E "(absl|protobuf)" | while read -r lib; do
-            LIBNAME=$(basename "$lib")
-            echo "Copying $LIBNAME..."
-            cp "$lib" "$FW_DIR/" || true
-            install_name_tool -id "@executable_path/../Frameworks/$LIBNAME" "$FW_DIR/$LIBNAME" || true
-          done
-
-          # Specifically fix the libprotobuf linking
-          for pb_lib in "$FW_DIR"/libprotobuf*.dylib; do
-            if [ -f "$pb_lib" ]; then
-              otool -L "$pb_lib" | grep "@rpath" | awk '{print $1}' | while read -r missing_lib; do
-                LIBNAME=$(basename "$missing_lib")
-                install_name_tool -change "$missing_lib" "@executable_path/../Frameworks/$LIBNAME" "$pb_lib" || true
-              done
-            fi
-          done
-
-      - name: Bundle all dependencies manually
-        run: |
-          set -u
-          APP="${MXXX_APP_PATH}"
-          MACOS_DIR="${APP}/Contents/MacOS"
-          FW_DIR="${APP}/Contents/Frameworks"
-          
-          echo "=== Finding and copying all external libraries ==="
-          for pass in 1 2 3 4 5; do
-            echo "--- Pass $pass ---"
-            find "$FW_DIR" -maxdepth 1 -name "*.dylib" -print0 | xargs -0 otool -L "${MACOS_DIR}/mixxx" 2>/dev/null | grep -v ":" | grep -v "@executable_path" | grep -v "@rpath" | grep -v "/System/Library" | grep -v "/usr/lib" | awk '{print $1}' | sort -u > /tmp/deps.txt || true
-            
-            COPIED=0
-            while read -r lib; do
-              [ -z "$lib" ] && continue
-              LIBNAME="$(basename "$lib")"
-              if [ ! -f "$FW_DIR/$LIBNAME" ]; then
-                REAL_LIB="$(readlink -f "$lib" 2>/dev/null || echo "$lib")"
-                if [ -f "$REAL_LIB" ]; then
-                  cp "$REAL_LIB" "$FW_DIR/$LIBNAME" || true
-                  chmod +w "$FW_DIR/$LIBNAME" || true
-                  install_name_tool -id "@executable_path/../Frameworks/$LIBNAME" "$FW_DIR/$LIBNAME" 2>/dev/null || true
-                  COPIED=$((COPIED + 1))
-                  echo "Copied: $LIBNAME"
-                fi
-              fi
-            done < /tmp/deps.txt || true
-            if [ "$COPIED" -eq 0 ]; then
-              break
-            fi
-          done
-          
-          echo "=== Rewriting paths in the mixxx executable ==="
-          otool -L "${MACOS_DIR}/mixxx" | grep -v ":" | grep -v "/System/Library" | grep -v "/usr/lib" | grep -v "@executable_path" | grep -v "@rpath" | awk '{print $1}' | sort -u | while read -r lib; do
-            [ -z "$lib" ] && continue
-            LIBNAME="$(basename "$lib")"
-            install_name_tool -change "$lib" "@executable_path/../Frameworks/$LIBNAME" "${MACOS_DIR}/mixxx" 2>/dev/null || true
-          done || true
-          
-          echo "=== Rewriting paths in all copied libraries ==="
-          for lib in "$FW_DIR"/*; do
-            if [ -f "$lib" ]; then
-              otool -L "$lib" 2>/dev/null | grep -v ":" | grep -v "/System/Library" | grep -v "/usr/lib" | grep -v "@executable_path" | grep -v "@rpath" | awk '{print $1}' | sort -u | while read -r dep; do
-                [ -z "$dep" ] && continue
-                DEPNAME="$(basename "$dep")"
-                install_name_tool -change "$dep" "@executable_path/../Frameworks/$DEPNAME" "$lib" 2>/dev/null || true
-              done || true
-            fi
-          done || true
-          
-          echo "=== Final otool check on mixxx (should be empty) ==="
-          otool -L "${MACOS_DIR}/mixxx" | grep -E "(Cellar|/usr/local|@rpath)" || echo "(clean)"
+          python3 .github/scripts/check_sdk_symbols.py \
+            --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" "$MXXX_APP_PATH"
 
       - name: Install create-dmg
         run: brew install create-dmg
