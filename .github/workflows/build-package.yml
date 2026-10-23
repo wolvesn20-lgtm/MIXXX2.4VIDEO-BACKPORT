@@ -394,6 +394,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
-          path: Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg
+          path: Mixxx-2.4-VIDEO-BACKPORT-macos-10.13.dmg
           if-no-files-found: error
           retention-days: 7
