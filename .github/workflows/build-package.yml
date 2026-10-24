@@ -54,9 +54,24 @@ jobs:
           brew install nasm pkg-config autoconf automake libtool
 
           git clone --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
-          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
 
           PORTS=$(grep -v '^[[:space:]]*#' source_repo/vcpkg-ports.txt | grep -v '^[[:space:]]*$' | tr '\n' ' ')
+
+          # Check every port name now and report ALL unknown ones at once,
+          # instead of failing on the first one minutes into the install.
+          bad_ports=0
+          for p in $PORTS; do
+            base="${p%%\[*}"
+            if [ ! -d "$RUNNER_TEMP/vcpkg/ports/$base" ]; then
+              similar="$(ls "$RUNNER_TEMP/vcpkg/ports" | grep -i -- "${base#lib}" | head -6 | tr '\n' ' ' || true)"
+              echo "::error::vcpkg has no port named '$base'. Similar names: ${similar:-none}"
+              bad_ports=1
+            fi
+          done
+          if [ "$bad_ports" -ne 0 ]; then exit 1; fi
+          echo "All port names exist."
+
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
           "$RUNNER_TEMP/vcpkg/vcpkg" install $PORTS \
             --overlay-triplets="$PWD/source_repo/triplets" \
             --triplet x64-osx-min1013-release \
@@ -466,4 +481,61 @@ jobs:
           
           MACDEPLOYQT="$(command -v macdeployqt || true)"
           if [ -z "$MACDEPLOYQT" ]; then
-            MACDEPLOYQT="$(find /usr/local -name macd
+            MACDEPLOYQT="$(find /usr/local -name macdeployqt -type f 2>/dev/null | head -1)"
+          fi
+          echo "Using macdeployqt: $MACDEPLOYQT"
+          
+          "$MACDEPLOYQT" "$APP" -verbose=2 \
+            -libpath="$DEPS/lib" \
+            -libpath="${{ github.workspace }}/qtkeychain_install/lib" \
+            -libpath=/usr/local/lib \
+            -libpath=/usr/local/opt/qt@5/lib \
+            -libpath="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib" || true
+
+      - name: Finalize bundle using strict 10.13 validation
+        run: |
+          python3 "$SCRIPTS_DIR/finalize_bundle.py" "$MXXX_APP_PATH" \
+            --qt-dir "${{ github.workspace }}/qt/Qt/5.15.2/macos" \
+            --search "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
+            --search "${GITHUB_WORKSPACE}/qtkeychain_install/lib" \
+            --min-macos 10.13
+
+      - name: Final symbol check against the macOS 10.13 SDK
+        run: |
+          python3 "$SCRIPTS_DIR/check_sdk_symbols.py" \
+            --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" "$MXXX_APP_PATH"
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+          APP="${MXXX_APP_PATH}"
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            echo "ERROR: MXXX_APP_PATH not set or invalid: '$APP'"
+            exit 1
+          fi
+          OUT="Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg"
+          rm -f "$OUT"
+          create-dmg \
+            --volname "Mixxx 2.4" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --app-drop-link 450 185 \
+            "$OUT" \
+            "$APP" || true
+          if [ ! -f "$OUT" ]; then
+            echo "ERROR: DMG was not created."
+            exit 1
+          fi
+          ls -lh "$OUT"
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
+          path: Mixxx-2.4-VIDEO-BACKPORT-macos-10.13.dmg
+          if-no-files-found: error
+          retention-days: 7
