@@ -1,11 +1,32 @@
-ffmpeg[core,avcodec,avformat,swresample,swscale]
+# Ports built for macOS 10.13 with vcpkg. One per line; # starts a comment.
+# Commit as vcpkg-ports.txt in your repo root.
+#
+# This replaces these Homebrew packages from your workflow:
+#   ffmpeg chromaprint libebur128 fftw flac libvorbis sound-touch portaudio
+#   hidapi portmidi rubberband
+# plus the libraries Homebrew pulled in underneath them (libsndfile, libsamplerate,
+# libusb, mpg123, lame, opus, ...). protobuf and libkeyfinder are built from
+# source by the workflow instead (protobuf pinned to 3.21.12 so abseil is not needed).
+#
+# Keep using Homebrew for header-only and test-only packages: boost cpp-gsl
+# googletest google-benchmark pkg-config create-dmg
+
+# Add features here as the video backport needs them, e.g. ffmpeg[x264,x265,vpx,gpl]
+# (x264/x265 need "gpl"; native h264/hevc/vp8/vp9 decoders need no extra feature).
+ffmpeg[dav1d]
 chromaprint
 libebur128
 fftw3
-libflac
+flac
 libvorbis
 soundtouch
 portaudio
 hidapi
 portmidi
 rubberband
+libsamplerate
+libsndfile
+libusb
+mpg123
+mp3lame
+opus
