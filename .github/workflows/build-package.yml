@@ -43,7 +43,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/deps-1013
-          key: deps-1013-v3-${{ runner.os }}-${{ hashFiles('source_repo/triplets/*.cmake', 'source_repo/vcpkg-ports.txt') }}
+          key: deps-1013-v4-${{ runner.os }}-${{ hashFiles('source_repo/triplets/*.cmake', 'source_repo/vcpkg-ports.txt') }}
 
       - name: Build dependencies for macOS 10.13
         if: steps.deps-cache.outputs.cache-hit != 'true'
@@ -104,6 +104,67 @@ jobs:
             --scan-dir "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
             --min-macos 10.13
 
+      # Fails within a minute if a library Mixxx needs is not in the dependency set,
+      # instead of ~40 minutes later at the Mixxx configure step.
+      - name: Check dependency inventory
+        run: |
+          set -uo pipefail
+          DEPS="$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release"
+          LIB="$DEPS/lib"
+          missing=0
+          check() {
+            label="$1"; shift
+            for pat in "$@"; do
+              if ls "$LIB"/$pat >/dev/null 2>&1; then
+                printf '  ok       %s\n' "$label"; return 0
+              fi
+            done
+            printf '  MISSING  %s   (looked for: %s)\n' "$label" "$*"
+            missing=1
+          }
+          echo "Libraries expected in $LIB:"
+          check "ffmpeg: avcodec"     'libavcodec*.dylib'
+          check "ffmpeg: avformat"    'libavformat*.dylib'
+          check "ffmpeg: avutil"      'libavutil*.dylib'
+          check "ffmpeg: swscale"     'libswscale*.dylib'
+          check "ffmpeg: swresample"  'libswresample*.dylib'
+          check "FLAC"                'libFLAC.*dylib'
+          check "ogg"                 'libogg*.dylib'
+          check "vorbis"              'libvorbis.*dylib'
+          check "vorbisenc"           'libvorbisenc*.dylib'
+          check "vorbisfile"          'libvorbisfile*.dylib'
+          check "opus"                'libopus*.dylib'
+          check "mp3lame (LAME)"      'libmp3lame*.dylib' 'libmp3lame*.a'
+          check "mpg123"              'libmpg123*.dylib'
+          check "libsndfile"          'libsndfile*.dylib'
+          check "libsamplerate"       'libsamplerate*.dylib'
+          check "SoundTouch"          'libSoundTouch*.dylib'
+          check "rubberband"          'librubberband*.dylib'
+          check "chromaprint"         'libchromaprint*.dylib'
+          check "ebur128"             'libebur128*.dylib'
+          check "fftw3"               'libfftw3*.dylib'
+          check "hidapi"              'libhidapi*.dylib'
+          check "libusb"              'libusb*.dylib'
+          check "portaudio"           'libportaudio*.dylib'
+          check "portmidi"            'libportmidi*.dylib'
+          check "protobuf"            'libprotobuf.*dylib'
+          check "protobuf-lite"       'libprotobuf-lite*.dylib'
+          check "libkeyfinder"        'libkeyfinder*.dylib'
+          if [ ! -f "$DEPS/include/lame/lame.h" ]; then
+            echo "  MISSING  header lame/lame.h"; missing=1
+          fi
+          echo
+          echo "Everything under $DEPS that mentions lame:"
+          find "$DEPS" -iname '*lame*' 2>/dev/null | head -20 || true
+          echo
+          echo "All libraries present:"
+          ls "$LIB" | grep -E '\.(dylib|a)$' | grep -v -- '-[0-9]' | head -120 || true
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::Some libraries are missing from the dependency set. Add the matching ports to vcpkg-ports.txt (the file shipped with this workflow lists them all) and rebuild."
+            exit 1
+          fi
+          echo "Inventory complete."
+
       # Saved only after the dependencies passed the check, and immediately,
       # so a later failure in the job no longer throws the build away.
       - name: Save macOS 10.13 dependencies
@@ -111,7 +172,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/deps-1013
-          key: deps-1013-v3-${{ runner.os }}-${{ hashFiles('source_repo/triplets/*.cmake', 'source_repo/vcpkg-ports.txt') }}
+          key: deps-1013-v4-${{ runner.os }}-${{ hashFiles('source_repo/triplets/*.cmake', 'source_repo/vcpkg-ports.txt') }}
 
       - name: Restore macOS 10.13 SDK
         id: sdk-cache
@@ -297,6 +358,15 @@ jobs:
           export CMAKE_PREFIX_PATH="$DEPS;${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}"
           qmake -v
 
+          # Point Mixxx's FindMp3lame at the vcpkg copy explicitly (variable names are
+          # the ones CMake reported as missing).
+          LAME_LIB="$(ls "$DEPS"/lib/libmp3lame*.dylib "$DEPS"/lib/libmp3lame*.a 2>/dev/null | head -1 || true)"
+          LAME_FLAGS=""
+          if [ -n "$LAME_LIB" ] && [ -f "$DEPS/include/lame/lame.h" ]; then
+            LAME_FLAGS="-Dmp3lame_LIBRARY=$LAME_LIB -Dmp3lame_INCLUDE_DIR=$DEPS/include"
+          fi
+          echo "LAME hints: ${LAME_FLAGS:-none found}"
+
           QT5KEYCHAIN_CONFIG="$(
             find "${QTKEYCHAIN_PREFIX}" -type f \
               \( -name "Qt5KeychainConfig.cmake" -o -name "qt5keychain-config.cmake" \) \
@@ -318,7 +388,8 @@ jobs:
             -DBUILD_BENCH=OFF \
             -DOPTIMIZE=portable \
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
-            -DQt5Keychain_DIR="$QT5KEYCHAIN_DIR"
+            -DQt5Keychain_DIR="$QT5KEYCHAIN_DIR" \
+            $LAME_FLAGS
 
       - name: Build Mixxx Application
         run: |
@@ -395,61 +466,4 @@ jobs:
           
           MACDEPLOYQT="$(command -v macdeployqt || true)"
           if [ -z "$MACDEPLOYQT" ]; then
-            MACDEPLOYQT="$(find /usr/local -name macdeployqt -type f 2>/dev/null | head -1)"
-          fi
-          echo "Using macdeployqt: $MACDEPLOYQT"
-          
-          "$MACDEPLOYQT" "$APP" -verbose=2 \
-            -libpath="$DEPS/lib" \
-            -libpath="${{ github.workspace }}/qtkeychain_install/lib" \
-            -libpath=/usr/local/lib \
-            -libpath=/usr/local/opt/qt@5/lib \
-            -libpath="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib" || true
-
-      - name: Finalize bundle using strict 10.13 validation
-        run: |
-          python3 "$SCRIPTS_DIR/finalize_bundle.py" "$MXXX_APP_PATH" \
-            --qt-dir "${{ github.workspace }}/qt/Qt/5.15.2/macos" \
-            --search "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
-            --search "${GITHUB_WORKSPACE}/qtkeychain_install/lib" \
-            --min-macos 10.13
-
-      - name: Final symbol check against the macOS 10.13 SDK
-        run: |
-          python3 "$SCRIPTS_DIR/check_sdk_symbols.py" \
-            --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" "$MXXX_APP_PATH"
-
-      - name: Install create-dmg
-        run: brew install create-dmg
-
-      - name: Create DMG
-        run: |
-          set -euo pipefail
-          APP="${MXXX_APP_PATH}"
-          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
-            echo "ERROR: MXXX_APP_PATH not set or invalid: '$APP'"
-            exit 1
-          fi
-          OUT="Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg"
-          rm -f "$OUT"
-          create-dmg \
-            --volname "Mixxx 2.4" \
-            --window-pos 200 120 \
-            --window-size 600 400 \
-            --icon-size 100 \
-            --app-drop-link 450 185 \
-            "$OUT" \
-            "$APP" || true
-          if [ ! -f "$OUT" ]; then
-            echo "ERROR: DMG was not created."
-            exit 1
-          fi
-          ls -lh "$OUT"
-
-      - name: Upload macOS DMG
-        uses: actions/upload-artifact@v4
-        with:
-          name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
-          path: Mixxx-2.4-VIDEO-BACKPORT-macos-10.13.dmg
-          if-no-files-found: error
-          retention-days: 7
+            MACDEPLOYQT="$(find /usr/local -name macd
