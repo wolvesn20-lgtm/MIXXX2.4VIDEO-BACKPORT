@@ -45,13 +45,30 @@ jobs:
           path: ${{ github.workspace }}/deps-1013
           key: deps-1013-v4-${{ runner.os }}-${{ hashFiles('source_repo/triplets/*.cmake', 'source_repo/vcpkg-ports.txt') }}
 
+      # vcpkg keeps a binary cache of every port it has built. Saving it even when the
+      # job fails means a retry only rebuilds what had not finished yet.
+      - name: Restore vcpkg binary cache
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/vcpkg-archives
+          key: vcpkg-archives-v1-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-archives-v1-${{ runner.os }}-
+
       - name: Build dependencies for macOS 10.13
         if: steps.deps-cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           set -f
 
-          brew install nasm pkg-config autoconf automake libtool
+          export VCPKG_DEFAULT_BINARY_CACHE="$GITHUB_WORKSPACE/vcpkg-archives"
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+
+          # Ports built with autotools (libusb, ...) need these. Homebrew installs GNU
+          # libtool as glibtool; the gnubin directory provides the plain names.
+          brew install nasm pkg-config autoconf automake libtool autoconf-archive
+          export PATH="$(brew --prefix libtool)/libexec/gnubin:$PATH"
 
           git clone --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
 
@@ -72,12 +89,26 @@ jobs:
           echo "All port names exist."
 
           "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
-          "$RUNNER_TEMP/vcpkg/vcpkg" install $PORTS \
+          VCPKG_LOG="$RUNNER_TEMP/vcpkg-install.log"
+          if ! "$RUNNER_TEMP/vcpkg/vcpkg" install $PORTS \
             --overlay-triplets="$PWD/source_repo/triplets" \
             --triplet x64-osx-min1013-release \
             --x-install-root="$PWD/deps-1013" \
             --x-buildtrees-root="$RUNNER_TEMP/vcpkg-buildtrees" \
-            --clean-after-build
+            --clean-after-build 2>&1 | tee "$VCPKG_LOG"; then
+            echo
+            echo "=============== vcpkg failed: first error messages ==============="
+            grep -n -B3 -A25 -m3 -E 'CMake Error|^error: ' "$VCPKG_LOG" | head -150 || true
+            echo
+            echo "=============== vcpkg failed: error logs (last 70 lines each) ==============="
+            for f in $(find "$RUNNER_TEMP/vcpkg-buildtrees" -name '*err.log' -size +0 2>/dev/null | head -8); do
+              echo; echo "----- $f"; tail -n 70 "$f"
+            done
+            for f in $(find "$RUNNER_TEMP/vcpkg-buildtrees" -name 'config.log' 2>/dev/null | head -2); do
+              echo; echo "----- $f (last 40 lines)"; tail -n 40 "$f"
+            done
+            exit 1
+          fi
 
           DEPS="$PWD/deps-1013/x64-osx-min1013-release"
 
@@ -112,6 +143,14 @@ jobs:
             -DCMAKE_INSTALL_PREFIX="$DEPS"
           cmake --build "$RUNNER_TEMP/libkeyfinder/build" --parallel
           cmake --install "$RUNNER_TEMP/libkeyfinder/build"
+
+      - name: Save vcpkg binary cache
+        if: always() && steps.deps-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/vcpkg-archives
+          key: vcpkg-archives-v1-${{ runner.os }}-${{ github.run_id }}
 
       - name: Check every dependency really targets macOS 10.13
         run: |
