@@ -210,11 +210,22 @@ class Sdk:
         self.root = root
         self.docs, self.closure, self.tried = {}, {}, set()
         self.unresolved_reexports = set()
+        self.incomplete = set()    # libraries whose re-export chain has gaps
+        self._index = None
 
     def _load_file(self, path):
         with open(path, encoding="utf-8", errors="replace") as f:
             for d in parse_tbd_text(f.read()):
                 self.docs.setdefault(d["install"], d)
+
+    def _build_index(self):
+        """Map every .tbd file name in the SDK to its paths (built once, on demand)."""
+        idx = collections.defaultdict(list)
+        for dirpath, _dirs, files in os.walk(self.root):
+            for fn in files:
+                if fn.endswith(".tbd"):
+                    idx[fn[:-4]].append(os.path.join(dirpath, fn))
+        self._index = idx
 
     def doc(self, install):
         if install in self.docs:
@@ -228,6 +239,23 @@ class Sdk:
                 self._load_file(p)
                 if install in self.docs:
                     return self.docs[install]
+        # Fallback for nested frameworks and sub-libraries whose location the
+        # rules above do not predict: find the .tbd by file name anywhere in the SDK.
+        if self._index is None:
+            self._build_index()
+        name = os.path.basename(install)
+        stems = [name, re.sub(r"\.dylib$", "", name)]
+        m = re.match(r"^(lib[^.]+)\.", name)
+        if m:
+            stems.append(m.group(1))
+        for stem in dict.fromkeys(stems):
+            for p in sorted(self._index.get(stem, [])):
+                if p in self.tried:
+                    continue
+                self.tried.add(p)
+                self._load_file(p)
+                if install in self.docs:
+                    return self.docs[install]
         return None
 
     def exports(self, install, stack=()):
@@ -238,20 +266,33 @@ class Sdk:
         if d is None:
             return None
         out = set(d["symbols"])
+        gap = False
         for r in d["reexports"]:
             if r in stack or r == install:
                 continue
             sub = self.exports(r, stack + (install,))
             if sub is None:
                 self.unresolved_reexports.add(r)
+                gap = True
             else:
                 out |= sub
+                gap = gap or r in self.incomplete
+        if gap:
+            self.incomplete.add(install)
         self.closure[install] = out
         return out
 
     def framework_exists(self, install):
         m = re.match(r"^(.*\.framework)/", install.lstrip("/"))
         return bool(m) and os.path.isdir(os.path.join(self.root, m.group(1)))
+
+
+def classify_import(sdk, lib, name):
+    """'ok', 'missing' (proven absent), or 'unverified' (library's re-export chain has gaps)."""
+    exports = sdk.exports(lib)
+    if exports is None or name in exports:
+        return "ok"
+    return "unverified" if lib in sdk.incomplete else "missing"
 
 
 def is_system(name):
@@ -264,6 +305,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="+", help=".app bundles or directories to scan")
     ap.add_argument("--sdk", required=True, help="path to MacOSX10.13.sdk")
+    ap.add_argument("--strict", action="store_true",
+                    help="also fail on imports that could not be verified")
     ap.add_argument("--max-files", type=int, default=6,
                     help="files to list per missing symbol (default 6)")
     a = ap.parse_args()
@@ -281,6 +324,7 @@ def main():
     print("SDK ok: libSystem exports %d symbols (incl. re-exports)" % len(libsystem))
 
     missing_sym = collections.defaultdict(set)     # (symbol, lib) -> files
+    unverified_sym = collections.defaultdict(set)  # same, but the SDK data is incomplete
     missing_lib = collections.defaultdict(set)     # (lib, fatal) -> files
     scanned = 0
     for root in a.paths:
@@ -307,8 +351,12 @@ def main():
                         fatal = gone and cmd != LC_LOAD_WEAK
                         missing_lib[(lib, fatal, gone)].add(rel)
                     continue
-                if name not in exports and not weak_ref:
-                    missing_sym[(name, lib)].add(rel)
+                if not weak_ref:
+                    verdict = classify_import(sdk, lib, name)
+                    if verdict == "missing":
+                        missing_sym[(name, lib)].add(rel)
+                    elif verdict == "unverified":
+                        unverified_sym[(name, lib)].add(rel)
 
     print("Scanned %d x86_64 Mach-O files." % scanned)
     problems = 0
@@ -326,14 +374,30 @@ def main():
         more = " ..." if len(files) > a.max_files else ""
         print("ERROR: %s is not in %s of this SDK  (%d files: %s%s)"
               % (name, os.path.basename(lib), len(files), shown, more))
+    by_lib = collections.defaultdict(list)
+    for (name, lib), files in unverified_sym.items():
+        by_lib[lib].append(name)
+    for lib, names in sorted(by_lib.items()):
+        print("warning: could not verify %d import(s) from %s because part of its "
+              "re-export chain has no .tbd in this SDK: %s%s"
+              % (len(names), os.path.basename(lib), ", ".join(sorted(names)[:6]),
+                 " ..." if len(names) > 6 else ""))
+    if a.strict and unverified_sym:
+        problems += len(unverified_sym)
     if sdk.unresolved_reexports:
-        print("note: %d re-exported libraries had no .tbd and were skipped"
+        print("note: %d re-exported libraries had no .tbd and were skipped:"
               % len(sdk.unresolved_reexports))
+        for r in sorted(sdk.unresolved_reexports)[:20]:
+            print("  - " + r)
     if problems:
         print("\nFAILED: %d problem(s). These would be 'Symbol not found' (or a missing "
               "library) on the older macOS." % problems)
         sys.exit(1)
-    print("OK: every non-weak system symbol is present in the SDK.")
+    if unverified_sym:
+        print("OK, with %d import(s) that could not be verified (see warnings above). "
+              "Use --strict to treat those as failures." % len(unverified_sym))
+    else:
+        print("OK: every non-weak system symbol is present in the SDK.")
 
 
 if __name__ == "__main__":
