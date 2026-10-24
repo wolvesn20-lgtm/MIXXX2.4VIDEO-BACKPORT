@@ -19,6 +19,8 @@ jobs:
           submodules: recursive
           path: source_repo
 
+      # Fails in seconds (not after a 21-minute build) if a helper script is missing.
+      # Works whether the scripts sit in .github/scripts/ or in the repo root.
       - name: Locate helper scripts
         run: |
           set -euo pipefail
@@ -31,6 +33,7 @@ jobs:
               exit 1
             fi
             echo "$f found at $found"
+            echo "  fingerprint: $(shasum -a 256 "$found" | cut -c1-16)"
             cp "$found" "$RUNNER_TEMP/scripts/$f"
           done
           echo "SCRIPTS_DIR=$RUNNER_TEMP/scripts" >> "$GITHUB_ENV"
@@ -63,6 +66,9 @@ jobs:
 
           DEPS="$PWD/deps-1013/x64-osx-min1013-release"
 
+          # protoc is run during the Mixxx build. CMake strips build rpaths on install,
+          # so without INSTALL_RPATH protoc cannot find libprotobuf and dies with
+          # "Library not loaded: @rpath/libprotobuf...".
           git clone --depth 1 --branch v21.12 \
             https://github.com/protocolbuffers/protobuf.git "$RUNNER_TEMP/protobuf"
           cmake -S "$RUNNER_TEMP/protobuf/cmake" -B "$RUNNER_TEMP/protobuf/build" \
@@ -98,6 +104,8 @@ jobs:
             --scan-dir "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
             --min-macos 10.13
 
+      # Saved only after the dependencies passed the check, and immediately,
+      # so a later failure in the job no longer throws the build away.
       - name: Save macOS 10.13 dependencies
         if: steps.deps-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -255,6 +263,8 @@ jobs:
           cmake --build qtkeychain_build --config Release --parallel 4
           cmake --install qtkeychain_build --config Release
 
+      # Restored from your earlier workflow: Mixxx 2.4 needs TagLib, and the
+      # Homebrew taglib is no longer installed.
       - name: Checkout TagLib 1.11.1
         uses: actions/checkout@v4
         with:
@@ -440,6 +450,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
-          path: Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg
+          path: Mixxx-2.4-VIDEO-BACKPORT-macos-10.13.dmg
           if-no-files-found: error
           retention-days: 7
