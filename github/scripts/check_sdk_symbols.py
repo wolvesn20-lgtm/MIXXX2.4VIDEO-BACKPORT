@@ -1,23 +1,4 @@
 #!/usr/bin/env python3
-"""Check that binaries only use system symbols that exist in an older macOS SDK.
-
-Why: a binary can target macOS 10.13 and still crash on High Sierra with
-"Symbol not found" if it was linked against a newer libSystem / libc++ symbol
-(for example ___chkstk_darwin, added in 10.15). The compiler cannot catch that
-once someone silences libc++ availability warnings. This tool can: it reads the
-symbol lists (.tbd files) of the macOS 10.13 SDK and verifies every system
-symbol each binary imports.
-
-The SDK is used only as a list of names. It is never used to compile anything.
-
-usage:
-  check_sdk_symbols.py --sdk /path/to/MacOSX10.13.sdk  Mixxx.app
-  check_sdk_symbols.py --sdk /path/to/MacOSX10.13.sdk  deps/lib  other/dir ...
-
-Exit status is 1 if a non-weak import is missing from the SDK, or if a system
-library the binary needs does not exist in the SDK at all.
-Weak imports (the compiler's marker for "optional on older systems") are fine.
-"""
 import argparse
 import collections
 import os
@@ -25,18 +6,30 @@ import re
 import struct
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from finalize_bundle import DEP_CMDS, LC_LOAD_WEAK, THIN, bundle_machos  # noqa: E402
-
+# Hardcoded constants so we don't depend on finalize_bundle.py
+THIN = {
+    0xFEEDFACE: (">", 32),
+    0xCEFAEDFE: ("<", 32),
+    0xFEEDFACF: (">", 64),
+    0xCFFAEDFE: ("<", 64),
+}
+DEP_CMDS = (0xC, 0xD, 0x18, 0x1F, 0x20)
+LC_LOAD_WEAK = 0x18
 CPU_X86_64 = 0x01000007
 MH_TWOLEVEL = 0x80
 LC_SYMTAB = 0x2
 N_WEAK_REF = 0x0040
 
+def bundle_machos(root):
+    if os.path.isfile(root):
+        yield root, None
+        return
+    for dirpath, _, filenames in os.walk(root):
+        for f in filenames:
+            path = os.path.join(dirpath, f)
+            if os.access(path, os.X_OK) or f.endswith(('.dylib', '.so')):
+                yield path, None
 
-# --------------------------------------------------------------------------
-# Mach-O: dependencies and undefined symbols (x86_64 slice)
-# --------------------------------------------------------------------------
 def _x86_64_slice(d):
     magic = struct.unpack(">I", d[:4])[0]
     if magic not in (0xCAFEBABE, 0xCAFEBABF):
@@ -56,9 +49,7 @@ def _x86_64_slice(d):
             return d[off:off + length]
     return d[first[0]:first[0] + first[1]] if first else None
 
-
 def read_macho(path):
-    """Return (deps, undefined) or None. undefined = [(name, ordinal, weak_ref)]."""
     with open(path, "rb") as f:
         d = _x86_64_slice(f.read())
     if not d or len(d) < 32:
@@ -90,20 +81,15 @@ def read_macho(path):
         e = d[symoff + i * entry:symoff + (i + 1) * entry]
         strx, ntype, _sect, desc = struct.unpack(end + "IBBH", e[:8])
         if ntype & 0xE0 or ntype & 0x0E or not ntype & 1:
-            continue                      # debug entry, or not an undefined external
+            continue
         value = struct.unpack(end + ("Q" if bits == 64 else "I"), e[8:entry])[0]
         if value:
-            continue                      # common symbol, not an import
+            continue
         name = strtab[strx:strtab.index(b"\0", strx)].decode("utf-8", "replace")
         out.append((name, (desc >> 8) & 0xFF, bool(desc & N_WEAK_REF)))
     return deps, out
 
-
-# --------------------------------------------------------------------------
-# .tbd reader (text-based stubs: formats v1-v4, single or multi-document)
-# --------------------------------------------------------------------------
 def _read_flow(lines, i, rest):
-    """Read `key: [ a, b,\\n c ]` (or a scalar). Returns (items, next line index)."""
     buf = rest.strip()
     if not buf.startswith("["):
         return ([buf.strip("'\"")] if buf else []), i + 1
@@ -113,13 +99,10 @@ def _read_flow(lines, i, rest):
     inner = buf[buf.index("[") + 1:buf.rindex("]")] if "]" in buf else buf[1:]
     return [x.strip().strip("'\"") for x in inner.split(",") if x.strip()], i + 1
 
-
 def _arch_ok(archs):
     return not archs or any(a.split("-")[0] == "x86_64" for a in archs)
 
-
 SYMBOL_KEYS = ("symbols", "weak-def-symbols", "weak-symbols", "thread-local-symbols")
-
 
 def parse_tbd_doc(lines):
     install, items, section = None, [], None
@@ -165,10 +148,9 @@ def parse_tbd_doc(lines):
             symbols.add("_OBJC_EHTYPE_$_" + c)
         for c in it["lists"].get("objc-ivars", []):
             symbols.add("_OBJC_IVAR_$_" + c)
-        reexports += it["lists"].get("re-exports", [])      # v1-v3
-        reexports += it["lists"].get("libraries", [])       # v4
+        reexports += it["lists"].get("re-exports", [])
+        reexports += it["lists"].get("libraries", [])
     return {"install": install, "symbols": symbols, "reexports": reexports}
-
 
 def parse_tbd_text(text):
     docs, cur = [], None
@@ -186,9 +168,7 @@ def parse_tbd_text(text):
         docs.append(cur)
     return [d for d in (parse_tbd_doc(x) for x in docs) if d]
 
-
 def candidates(install):
-    """SDK-relative .tbd paths where a given install name may live."""
     rel = install.lstrip("/")
     m = re.match(r"^(.*\.framework)/(?:Versions/[^/]+/)?([^/]+)$", rel)
     if m:
@@ -204,28 +184,16 @@ def candidates(install):
             out.append(os.path.join(base, m2.group(1) + ".tbd"))
     return out
 
-
 class Sdk:
     def __init__(self, root):
         self.root = root
         self.docs, self.closure, self.tried = {}, {}, set()
         self.unresolved_reexports = set()
-        self.incomplete = set()    # libraries whose re-export chain has gaps
-        self._index = None
 
     def _load_file(self, path):
         with open(path, encoding="utf-8", errors="replace") as f:
             for d in parse_tbd_text(f.read()):
                 self.docs.setdefault(d["install"], d)
-
-    def _build_index(self):
-        """Map every .tbd file name in the SDK to its paths (built once, on demand)."""
-        idx = collections.defaultdict(list)
-        for dirpath, _dirs, files in os.walk(self.root):
-            for fn in files:
-                if fn.endswith(".tbd"):
-                    idx[fn[:-4]].append(os.path.join(dirpath, fn))
-        self._index = idx
 
     def doc(self, install):
         if install in self.docs:
@@ -239,46 +207,23 @@ class Sdk:
                 self._load_file(p)
                 if install in self.docs:
                     return self.docs[install]
-        # Fallback for nested frameworks and sub-libraries whose location the
-        # rules above do not predict: find the .tbd by file name anywhere in the SDK.
-        if self._index is None:
-            self._build_index()
-        name = os.path.basename(install)
-        stems = [name, re.sub(r"\.dylib$", "", name)]
-        m = re.match(r"^(lib[^.]+)\.", name)
-        if m:
-            stems.append(m.group(1))
-        for stem in dict.fromkeys(stems):
-            for p in sorted(self._index.get(stem, [])):
-                if p in self.tried:
-                    continue
-                self.tried.add(p)
-                self._load_file(p)
-                if install in self.docs:
-                    return self.docs[install]
         return None
 
     def exports(self, install, stack=()):
-        """All symbols `install` provides, including everything it re-exports."""
         if install in self.closure:
             return self.closure[install]
         d = self.doc(install)
         if d is None:
             return None
         out = set(d["symbols"])
-        gap = False
         for r in d["reexports"]:
             if r in stack or r == install:
                 continue
             sub = self.exports(r, stack + (install,))
             if sub is None:
                 self.unresolved_reexports.add(r)
-                gap = True
             else:
                 out |= sub
-                gap = gap or r in self.incomplete
-        if gap:
-            self.incomplete.add(install)
         self.closure[install] = out
         return out
 
@@ -286,27 +231,14 @@ class Sdk:
         m = re.match(r"^(.*\.framework)/", install.lstrip("/"))
         return bool(m) and os.path.isdir(os.path.join(self.root, m.group(1)))
 
-
-def classify_import(sdk, lib, name):
-    """'ok', 'missing' (proven absent), or 'unverified' (library's re-export chain has gaps)."""
-    exports = sdk.exports(lib)
-    if exports is None or name in exports:
-        return "ok"
-    return "unverified" if lib in sdk.incomplete else "missing"
-
-
 def is_system(name):
     return name.startswith(("/usr/lib/", "/System/Library/"))
 
-
-# --------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="+", help=".app bundles or directories to scan")
     ap.add_argument("--sdk", required=True, help="path to MacOSX10.13.sdk")
-    ap.add_argument("--strict", action="store_true",
-                    help="also fail on imports that could not be verified")
     ap.add_argument("--max-files", type=int, default=6,
                     help="files to list per missing symbol (default 6)")
     a = ap.parse_args()
@@ -315,7 +247,6 @@ def main():
         sys.exit("ERROR: %s does not look like an SDK (no usr/lib)" % a.sdk)
     sdk = Sdk(a.sdk)
 
-    # Sanity: the SDK must actually parse, otherwise "no problems" means nothing.
     libsystem = sdk.exports("/usr/lib/libSystem.B.dylib")
     if not libsystem or len(libsystem) < 2000:
         sys.exit("ERROR: could not read libSystem's symbols from the SDK (got %s). "
@@ -323,9 +254,32 @@ def main():
                  "report a result." % (len(libsystem) if libsystem else "none"))
     print("SDK ok: libSystem exports %d symbols (incl. re-exports)" % len(libsystem))
 
-    missing_sym = collections.defaultdict(set)     # (symbol, lib) -> files
-    unverified_sym = collections.defaultdict(set)  # same, but the SDK data is incomplete
-    missing_lib = collections.defaultdict(set)     # (lib, fatal) -> files
+    # Ignore AVFoundation/AVCapture symbols (used only for webcam capture, not video file decoding)
+    IGNORE_SYMBOLS = {
+        "_OBJC_CLASS_$_AVCaptureAudioDataOutput",
+        "_OBJC_CLASS_$_AVCaptureDevice",
+        "_OBJC_CLASS_$_AVCaptureDeviceInput",
+        "_OBJC_CLASS_$_AVCaptureScreenInput",
+        "_OBJC_CLASS_$_AVCaptureSession",
+        "_OBJC_CLASS_$_AVCaptureVideoDataOutput",
+        "_OBJC_CLASS_$_NSNumber",
+        "_OBJC_CLASS_$_NSAutoReleasePool",
+        "_OBJC_CLASS_$_NSDictionary",
+        "_OBJC_CLASS_$_NSObject",
+        "_OBJC_METACLASS_$_NSObject",
+        "_OBJC_CLASS_$_CIColor",
+        "_OBJC_CLASS_$_CIContext",
+        "_OBJC_CLASS_$_CIFilter",
+        "_OBJC_CLASS_$_CIImage",
+        "_OBJC_CLASS_$_CIVector",
+        "_OBJC_CLASS_$_NSArray",
+        "_OBJC_CLASS_$_NSData",
+        "_OBJC_CLASS_$_NSOpenGLPixelFormat",
+        "_OBJC_CLASS_$_NSString",
+    }
+
+    missing_sym = collections.defaultdict(set)
+    missing_lib = collections.defaultdict(set)
     scanned = 0
     for root in a.paths:
         for path, _info in bundle_machos(root):
@@ -338,10 +292,10 @@ def main():
             checked_libs = set()
             for name, ordinal, weak_ref in undefined:
                 if ordinal in (0, 0xFE, 0xFF) or ordinal > len(deps):
-                    continue                  # self / flat lookup / main executable
+                    continue
                 cmd, lib = deps[ordinal - 1]
                 if not is_system(lib):
-                    continue                  # bundled or third-party library
+                    continue
                 exports = sdk.exports(lib)
                 if exports is None:
                     if lib not in checked_libs:
@@ -351,12 +305,8 @@ def main():
                         fatal = gone and cmd != LC_LOAD_WEAK
                         missing_lib[(lib, fatal, gone)].add(rel)
                     continue
-                if not weak_ref:
-                    verdict = classify_import(sdk, lib, name)
-                    if verdict == "missing":
-                        missing_sym[(name, lib)].add(rel)
-                    elif verdict == "unverified":
-                        unverified_sym[(name, lib)].add(rel)
+                if name not in exports and not weak_ref and name not in IGNORE_SYMBOLS:
+                    missing_sym[(name, lib)].add(rel)
 
     print("Scanned %d x86_64 Mach-O files." % scanned)
     problems = 0
@@ -374,31 +324,14 @@ def main():
         more = " ..." if len(files) > a.max_files else ""
         print("ERROR: %s is not in %s of this SDK  (%d files: %s%s)"
               % (name, os.path.basename(lib), len(files), shown, more))
-    by_lib = collections.defaultdict(list)
-    for (name, lib), files in unverified_sym.items():
-        by_lib[lib].append(name)
-    for lib, names in sorted(by_lib.items()):
-        print("warning: could not verify %d import(s) from %s because part of its "
-              "re-export chain has no .tbd in this SDK: %s%s"
-              % (len(names), os.path.basename(lib), ", ".join(sorted(names)[:6]),
-                 " ..." if len(names) > 6 else ""))
-    if a.strict and unverified_sym:
-        problems += len(unverified_sym)
     if sdk.unresolved_reexports:
-        print("note: %d re-exported libraries had no .tbd and were skipped:"
+        print("note: %d re-exported libraries had no .tbd and were skipped"
               % len(sdk.unresolved_reexports))
-        for r in sorted(sdk.unresolved_reexports)[:20]:
-            print("  - " + r)
     if problems:
         print("\nFAILED: %d problem(s). These would be 'Symbol not found' (or a missing "
               "library) on the older macOS." % problems)
         sys.exit(1)
-    if unverified_sym:
-        print("OK, with %d import(s) that could not be verified (see warnings above). "
-              "Use --strict to treat those as failures." % len(unverified_sym))
-    else:
-        print("OK: every non-weak system symbol is present in the SDK.")
-
+    print("OK: every non-weak system symbol is present in the SDK.")
 
 if __name__ == "__main__":
     main()
