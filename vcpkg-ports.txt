@@ -11,13 +11,16 @@
 # Keep using Homebrew for header-only and test-only packages: boost cpp-gsl
 # googletest google-benchmark pkg-config create-dmg
 
+# Port names were checked against Mixxx's own vcpkg build instructions and its
+# published vcpkg packages (note: FLAC's port is called libflac, LAME's is mp3lame).
+#
 # Add features here as the video backport needs them, e.g. ffmpeg[x264,x265,vpx,gpl]
 # (x264/x265 need "gpl"; native h264/hevc/vp8/vp9 decoders need no extra feature).
 ffmpeg[dav1d]
 chromaprint
 libebur128
 fftw3
-flac
+libflac
 libvorbis
 soundtouch
 portaudio
