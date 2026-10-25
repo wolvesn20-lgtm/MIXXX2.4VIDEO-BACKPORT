@@ -448,7 +448,16 @@ jobs:
       - name: Build Mixxx Application
         run: |
           set -euo pipefail
-          cmake --build build --config Release --parallel 4
+          LOG="$RUNNER_TEMP/mixxx-build.log"
+          if ! cmake --build build --config Release --parallel 4 2>&1 | tee "$LOG"; then
+            echo
+            echo "=============== build failed: first errors (with context) ==============="
+            grep -n -B8 -A14 -m4 -E 'error:|Undefined symbols|ld: symbol|ld: library not found|fatal error|\*\*\* \[.*\] Error' "$LOG" | head -220 || true
+            echo
+            echo "=============== build failed: last 25 lines ==============="
+            tail -n 25 "$LOG"
+            exit 1
+          fi
 
       - name: Install Mixxx
         run: |
