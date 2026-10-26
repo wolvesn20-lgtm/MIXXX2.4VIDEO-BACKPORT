@@ -205,13 +205,14 @@ jobs:
             rm -f "/usr/local/bin/openssl"
           fi
 
-      - name: Install Remaining Core Mixxx Dependencies
-        run: |
-          set -euo pipefail
-          brew update
-          brew install \
-            googletest google-benchmark \
-            boost cpp-gsl pkg-config
+       - name: Install Remaining Core Mixxx Dependencies
+  run: |
+    set -euo pipefail
+    brew update
+    brew install \
+      googletest google-benchmark \
+      boost cpp-gsl pkg-config \
+      hidapi portmidi libusb
 
       - name: Install macdeployqt via Homebrew
         run: |
