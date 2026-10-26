@@ -439,7 +439,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/build/install" \
-            -DCMAKE_EXE_LINKER_FLAGS="-framework AudioToolbox -framework AppKit -framework CoreVideo -framework CoreMedia" \
+            -DCMAKE_EXE_LINKER_FLAGS="-framework AudioToolbox -framework AppKit -framework CoreVideo -framework CoreMedia -L$DEPS/lib -lswscale -lavcodec -lavformat -lavutil -lswresample" \
             -DCMAKE_CXX_FLAGS="-idirafter /usr/local/include" \
             -DTESTING=OFF \
             -DBUILD_TESTING=OFF \
