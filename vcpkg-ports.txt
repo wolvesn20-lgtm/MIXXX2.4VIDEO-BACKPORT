@@ -24,7 +24,7 @@ libflac
 libvorbis
 soundtouch
 portaudio
-hidapi
+
 portmidi
 rubberband
 libsamplerate
