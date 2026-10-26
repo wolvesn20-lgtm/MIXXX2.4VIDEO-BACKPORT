@@ -1,1 +1,7 @@
-
+{
+  "name": "libusb",
+  "version": "1.0.26",
+  "port-version": 1,
+  "description": "Dummy port to prevent VCPKG from building libusb",
+  "dependencies": []
+}
