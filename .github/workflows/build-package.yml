@@ -56,7 +56,6 @@ jobs:
           PORTS=$(grep -v '^[[:space:]]*#' source_repo/vcpkg-ports.txt | grep -v '^[[:space:]]*$' | tr '\n' ' ')
           "$RUNNER_TEMP/vcpkg/vcpkg" install $PORTS \
             --overlay-triplets="$PWD/source_repo/triplets" \
-            --overlay-ports="$PWD/source_repo/vcpkg-overlays" \
             --triplet x64-osx-min1013-release \
             --x-install-root="$PWD/deps-1013" \
             --x-buildtrees-root="$RUNNER_TEMP/vcpkg-buildtrees" \
@@ -205,14 +204,14 @@ jobs:
             rm -f "/usr/local/bin/openssl"
           fi
 
-       - name: Install Remaining Core Mixxx Dependencies
-  run: |
-    set -euo pipefail
-    brew update
-    brew install \
-      googletest google-benchmark \
-      boost cpp-gsl pkg-config \
-      hidapi portmidi libusb
+      - name: Install Remaining Core Mixxx Dependencies
+        run: |
+          set -euo pipefail
+          brew update
+          brew install \
+            googletest google-benchmark \
+            boost cpp-gsl pkg-config \
+            hidapi portmidi libusb
 
       - name: Install macdeployqt via Homebrew
         run: |
@@ -248,6 +247,195 @@ jobs:
           QT_PREFIX="$WORKSPACE/qt/Qt/5.15.2/macos"
           QTKEYCHAIN_PREFIX="$WORKSPACE/qtkeychain_install"
           cmake -S qtkeychain_src -B qtkeychain_build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
+            -DCMAKE_INSTALL_PREFIX="$QTKEYCHAIN_PREFIX" \
+            -DBUILD_WITH_QT6=OFF \
+            -DBUILD_TRANSLATIONS=OFF \
+            -DBUILD_TESTING=OFF
+          cmake --build qtkeychain_build --config Release --parallel 4
+          cmake --install qtkeychain_build --config Release
+
+      - name: Checkout TagLib 1.11.1
+        uses: actions/checkout@v4
+        with:
+          repository: taglib/taglib
+          ref: v1.11.1
+          path: taglib_src
+
+      - name: Build TagLib
+        run: |
+          set -euo pipefail
+          cmake -S taglib_src -B taglib_build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_TESTS=OFF \
+            -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
+          cmake --build taglib_build --config Release --parallel 4
+          cmake --install taglib_build --config Release
+
+      - name: Configure Mixxx CMake Project
+        run: |
+          set -euo pipefail
+          rm -rf build
+          DEPS="$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release"
+          QT_PREFIX="${GITHUB_WORKSPACE}/qt/Qt/5.15.2/macos"
+          QTKEYCHAIN_PREFIX="${GITHUB_WORKSPACE}/qtkeychain_install"
+          TAGLIB_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
+          export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/share/pkgconfig:${TAGLIB_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+          export CMAKE_PREFIX_PATH="$DEPS;${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}"
+          qmake -v
+
+          QT5KEYCHAIN_CONFIG="$(
+            find "${QTKEYCHAIN_PREFIX}" -type f \
+              \( -name "Qt5KeychainConfig.cmake" -o -name "qt5keychain-config.cmake" \) \
+              -print -quit
+          )"
+          if [ -z "$QT5KEYCHAIN_CONFIG" ]; then
+            echo "ERROR: Qt5Keychain CMake package was not found."
+            exit 1
+          fi
+          QT5KEYCHAIN_DIR="$(dirname "$QT5KEYCHAIN_CONFIG")"
+
+          cmake -S source_repo/source -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DCMAKE_EXE_LINKER_FLAGS="-framework AudioToolbox -framework AppKit -framework CoreVideo -framework CoreMedia -L$DEPS/lib -lswscale -lavcodec -lavformat -lavutil -lswresample" \
+            -DTESTING=OFF \
+            -DBUILD_TESTING=OFF \
+            -DBUILD_BENCH=OFF \
+            -DOPTIMIZE=portable \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -DQt5Keychain_DIR="$QT5KEYCHAIN_DIR"
+
+      - name: Build Mixxx Application
+        run: |
+          set -euo pipefail
+          cmake --build build --config Release --parallel 4 --target mixxx
+
+      - name: Assemble Mixxx.app bundle
+        run: |
+          set -euo pipefail
+          WORKSPACE="${GITHUB_WORKSPACE}"
+          MXXX_BIN="${WORKSPACE}/build/mixxx" 
+          APP="${WORKSPACE}/build/Mixxx.app"
+
+          if [ ! -f "${MXXX_BIN}" ]; then
+            echo "ERROR: ${MXXX_BIN} not found."
+            ls -la "${WORKSPACE}/build" || true
+            exit 1
+          fi
+
+          rm -rf "$APP"
+          mkdir -p "${APP}/Contents/MacOS"
+          mkdir -p "${APP}/Contents/Resources"
+          mkdir -p "${APP}/Contents/Frameworks"
+
+          cp "${MXXX_BIN}" "${APP}/Contents/MacOS/mixxx"
+          chmod +x "${APP}/Contents/MacOS/mixxx"
+
+          if [ -d "${WORKSPACE}/source_repo/res" ]; then
+            cp -R "${WORKSPACE}/source_repo/res/." "${APP}/Contents/Resources/"
+          fi
+
+          cat > "${APP}/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key><string>Mixxx</string>
+              <key>CFBundleDisplayName</key><string>Mixxx</string>
+              <key>CFBundleIdentifier</key><string>org.mixxx.Mixxx</string>
+              <key>CFBundleVersion</key><string>2.4.2</string>
+              <key>CFBundleShortVersionString</key><string>2.4.2</string>
+              <key>CFBundleExecutable</key><string>mixxx</string>
+              <key>CFBundlePackageType</key><string>APPL</string>
+              <key>CFBundleSignature</key><string>????</string>
+              <key>LSMinimumSystemVersion</key><string>10.13</string>
+              <key>NSHighResolutionCapable</key><true/>
+              <key>NSMicrophoneUsageDescription</key>
+              <string>Mixxx needs microphone access for recording and broadcasting.</string>
+              <key>CFBundleIconFile</key><string>mixxx.icns</string>
+          </dict>
+          </plist>
+          PLIST
+
+          ICON_SRC="${WORKSPACE}/source_repo/res/images/mixxx.icns"
+          if [ -f "$ICON_SRC" ]; then
+            cp "$ICON_SRC" "${APP}/Contents/Resources/mixxx.icns"
+          fi
+
+          echo "MXXX_APP_PATH=${APP}" >> "$GITHUB_ENV"
+
+      - name: Bundle Qt frameworks with macdeployqt
+        run: |
+          set -euo pipefail
+          APP="${MXXX_APP_PATH}"
+          DEPS="$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release"
+          
+          MACDEPLOYQT="$(command -v macdeployqt || true)"
+          if [ -z "$MACDEPLOYQT" ]; then
+            MACDEPLOYQT="$(find /usr/local -name macdeployqt -type f 2>/dev/null | head -1)"
+          fi
+          echo "Using macdeployqt: $MACDEPLOYQT"
+          
+          "$MACDEPLOYQT" "$APP" -verbose=2 \
+            -libpath="$DEPS/lib" \
+            -libpath="${{ github.workspace }}/qtkeychain_install/lib" \
+            -libpath=/usr/local/lib \
+            -libpath=/usr/local/opt/qt@5/lib \
+            -libpath="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib" || true
+
+      - name: Finalize bundle using strict 10.13 validation
+        run: |
+          python3 "$SCRIPTS_DIR/finalize_bundle.py" "$MXXX_APP_PATH" \
+            --qt-dir "${{ github.workspace }}/qt/Qt/5.15.2/macos" \
+            --search "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
+            --search "${GITHUB_WORKSPACE}/qtkeychain_install/lib" \
+            --min-macos 10.13
+
+      - name: Final symbol check against the macOS 10.13 SDK
+        run: |
+          python3 "$SCRIPTS_DIR/check_sdk_symbols.py" \
+            --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" "$MXXX_APP_PATH"
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+          APP="${MXXX_APP_PATH}"
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+            echo "ERROR: MXXX_APP_PATH not set or invalid: '$APP'"
+            exit 1
+          fi
+          OUT="Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg"
+          rm -f "$OUT"
+          create-dmg \
+            --volname "Mixxx 2.4" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --app-drop-link 450 185 \
+            "$OUT" \
+            "$APP" || true
+          if [ ! -f "$OUT" ]; then
+            echo "ERROR: DMG was not created."
+            exit 1
+          fi
+          ls -lh "$OUT"
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
+          path: Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg
+          if-no-files-found: error
+          retention-days: 7tkeychain_build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
             -DCMAKE_INSTALL_PREFIX="$QTKEYCHAIN_PREFIX" \
