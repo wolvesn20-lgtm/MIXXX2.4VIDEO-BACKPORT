@@ -452,4 +452,4 @@ jobs:
       - name: Build Mixxx Application
         run: |
               set -euo pipefail
-       cmake -build build --config Release --parallel 4 --target mixxx
+       cmake--build build --config Release --parallel 4 --target mixxx
