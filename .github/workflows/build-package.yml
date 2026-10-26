@@ -56,6 +56,7 @@ jobs:
           PORTS=$(grep -v '^[[:space:]]*#' source_repo/vcpkg-ports.txt | grep -v '^[[:space:]]*$' | tr '\n' ' ')
           "$RUNNER_TEMP/vcpkg/vcpkg" install $PORTS \
             --overlay-triplets="$PWD/source_repo/triplets" \
+            --overlay-ports="$PWD/source_repo/vcpkg-overlays" \
             --triplet x64-osx-min1013-release \
             --x-install-root="$PWD/deps-1013" \
             --x-buildtrees-root="$RUNNER_TEMP/vcpkg-buildtrees" \
