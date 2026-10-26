@@ -453,3 +453,127 @@ jobs:
         run: |
           set -euo pipefail
           cmake --build build --config Release --parallel 4 --target mixxx
+
+              - name: Assemble Mixxx.app bundle
+  run: |
+    set -euo pipefail
+    WORKSPACE="${GITHUB_WORKSPACE}"
+    # Grab the binary directly from the build folder
+    MXXX_BIN="${WORKSPACE}/build/mixxx" 
+    APP="${WORKSPACE}/build/Mixxx.app"
+
+    if [ ! -f "${MXXX_BIN}" ]; then
+      echo "ERROR: ${MXXX_BIN} not found."
+      ls -la "${WORKSPACE}/build" || true
+      exit 1
+    fi
+
+    rm -rf "$APP"
+    mkdir -p "${APP}/Contents/MacOS"
+    mkdir -p "${APP}/Contents/Resources"
+    mkdir -p "${APP}/Contents/Frameworks"
+
+    cp "${MXXX_BIN}" "${APP}/Contents/MacOS/mixxx"
+    chmod +x "${APP}/Contents/MacOS/mixxx"
+
+    # Copy resources directly from the source tree
+    if [ -d "${WORKSPACE}/source_repo/res" ]; then
+      cp -R "${WORKSPACE}/source_repo/res/." "${APP}/Contents/Resources/"
+    fi
+
+    cat > "${APP}/Contents/Info.plist" <<'PLIST'
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+      "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>CFBundleName</key><string>Mixxx</string>
+        <key>CFBundleDisplayName</key><string>Mixxx</string>
+        <key>CFBundleIdentifier</key><string>org.mixxx.Mixxx</string>
+        <key>CFBundleVersion</key><string>2.4.2</string>
+        <key>CFBundleShortVersionString</key><string>2.4.2</string>
+        <key>CFBundleExecutable</key><string>mixxx</string>
+        <key>CFBundlePackageType</key><string>APPL</string>
+        <key>CFBundleSignature</key><string>????</string>
+        <key>LSMinimumSystemVersion</key><string>10.13</string>
+        <key>NSHighResolutionCapable</key><true/>
+        <key>NSMicrophoneUsageDescription</key>
+        <string>Mixxx needs microphone access for recording and broadcasting.</string>
+        <key>CFBundleIconFile</key><string>mixxx.icns</string>
+    </dict>
+    </plist>
+    PLIST
+
+    ICON_SRC="${WORKSPACE}/source_repo/res/images/mixxx.icns"
+    if [ -f "$ICON_SRC" ]; then
+      cp "$ICON_SRC" "${APP}/Contents/Resources/mixxx.icns"
+    fi
+
+    echo "MXXX_APP_PATH=${APP}" >> "$GITHUB_ENV"
+
+    - name: Bundle Qt frameworks with macdeployqt
+  run: |
+    set -euo pipefail
+    APP="${MXXX_APP_PATH}"
+    DEPS="$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release"
+    
+    MACDEPLOYQT="$(command -v macdeployqt || true)"
+    if [ -z "$MACDEPLOYQT" ]; then
+      MACDEPLOYQT="$(find /usr/local -name macdeployqt -type f 2>/dev/null | head -1)"
+    fi
+    echo "Using macdeployqt: $MACDEPLOYQT"
+    
+    "$MACDEPLOYQT" "$APP" -verbose=2 \
+      -libpath="$DEPS/lib" \
+      -libpath="${{ github.workspace }}/qtkeychain_install/lib" \
+      -libpath=/usr/local/lib \
+      -libpath=/usr/local/opt/qt@5/lib \
+      -libpath="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib" || true
+
+    - name: Finalize bundle using strict 10.13 validation
+  run: |
+    python3 "$SCRIPTS_DIR/finalize_bundle.py" "$MXXX_APP_PATH" \
+      --qt-dir "${{ github.workspace }}/qt/Qt/5.15.2/macos" \
+      --search "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
+      --search "${GITHUB_WORKSPACE}/qtkeychain_install/lib" \
+      --min-macos 10.13
+
+    - name: Final symbol check against the macOS 10.13 SDK
+  run: |
+    python3 "$SCRIPTS_DIR/check_sdk_symbols.py" \
+      --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" "$MXXX_APP_PATH"
+      
+  - name: Install create-dmg
+  run: brew install create-dmg
+
+    - name: Create DMG
+  run: |
+    set -euo pipefail
+    APP="${MXXX_APP_PATH}"
+    if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+      echo "ERROR: MXXX_APP_PATH not set or invalid: '$APP'"
+      exit 1
+    fi
+    OUT="Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg"
+    rm -f "$OUT"
+    create-dmg \
+      --volname "Mixxx 2.4" \
+      --window-pos 200 120 \
+      --window-size 600 400 \
+      --icon-size 100 \
+      --app-drop-link 450 185 \
+      "$OUT" \
+      "$APP" || true
+    if [ ! -f "$OUT" ]; then
+      echo "ERROR: DMG was not created."
+      exit 1
+    fi
+    ls -lh "$OUT"
+
+  - name: Upload macOS DMG
+  uses: actions/upload-artifact@v4
+  with:
+    name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
+    path: Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg
+    if-no-files-found: error
+    retention-days: 7
