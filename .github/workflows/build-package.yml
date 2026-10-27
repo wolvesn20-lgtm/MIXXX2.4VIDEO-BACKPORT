@@ -72,10 +72,25 @@ jobs:
             problems=1
           fi
 
+          # Every line of vcpkg-ports.txt must be blank, a comment starting with #, or a port
+          # name such as  libusb  or  ffmpeg[dav1d].  Anything else is reported with its line number.
+          n=0
+          while IFS= read -r line || [ -n "$line" ]; do
+            n=$((n+1))
+            entry="$(printf '%s' "$line" | sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            if [ -z "$entry" ]; then continue; fi
+            if ! printf '%s' "$entry" | grep -Eq '^[a-z0-9][a-z0-9-]*(\[[a-z0-9,-]+\])?$'; then
+              echo "::error::vcpkg-ports.txt line $n is not a valid entry: $line"
+              echo "::error::  (comment lines must START with #; port lines hold only the port name)"
+              problems=1
+            fi
+          done < source_repo/vcpkg-ports.txt
+
+          ENTRIES="$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' source_repo/vcpkg-ports.txt | grep -v '^$' || true)"
           for port in ffmpeg chromaprint libebur128 fftw3 libflac libvorbis soundtouch \
                       portaudio hidapi portmidi rubberband libsamplerate libsndfile \
                       libusb mpg123 mp3lame opus; do
-            if ! grep -v '^[[:space:]]*#' source_repo/vcpkg-ports.txt | grep -q "^$port\(\[\|[[:space:]]*$\)"; then
+            if ! printf '%s\n' "$ENTRIES" | grep -Eq "^$port(\[|\$)"; then
               echo "::error::source_repo/vcpkg-ports.txt does not list the port '$port'"
               problems=1
             fi
@@ -130,7 +145,7 @@ jobs:
 
           git clone --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
 
-          PORTS=$(grep -v '^[[:space:]]*#' source_repo/vcpkg-ports.txt | grep -v '^[[:space:]]*$' | tr '\n' ' ')
+          PORTS=$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' source_repo/vcpkg-ports.txt | grep -v '^$' | tr '\n' ' ')
 
           # Check every port name now and report ALL unknown ones at once,
           # instead of failing on the first one minutes into the install.
