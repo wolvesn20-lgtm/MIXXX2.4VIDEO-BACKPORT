@@ -1,4 +1,4 @@
-# Ports built for macOS 10.13 with vcpkg. One per line; # starts a comment.
+I'm# Ports built for macOS 10.13 with vcpkg. One per line; # starts a comment.
 # Commit as vcpkg-ports.txt in your repo root.
 #
 # This replaces these Homebrew packages from your workflow:
@@ -24,8 +24,8 @@ libflac
 libvorbis
 soundtouch
 portaudio
-
-
+hidapi
+portmidi
 rubberband
 libsamplerate
 libsndfile
