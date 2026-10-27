@@ -19,6 +19,8 @@ jobs:
           submodules: recursive
           path: source_repo
 
+      # Fails in seconds (not after a 21-minute build) if a helper script is missing.
+      # Works whether the scripts sit in .github/scripts/ or in the repo root.
       - name: Locate helper scripts
         run: |
           set -euo pipefail
@@ -31,16 +33,74 @@ jobs:
               exit 1
             fi
             echo "$f found at $found"
+            echo "  fingerprint: $(shasum -a 256 "$found" | cut -c1-16)"
             cp "$found" "$RUNNER_TEMP/scripts/$f"
           done
           echo "SCRIPTS_DIR=$RUNNER_TEMP/scripts" >> "$GITHUB_ENV"
+
+      # Fails within seconds, with a plain message, if the workflow file was cut off
+      # (for example by a phone paste) or the supporting files were changed.
+      - name: Verify repository files
+        run: |
+          set -euo pipefail
+          problems=0
+
+          wf="$(grep -l "CMake Cloud Build and Package Pipeline" source_repo/.github/workflows/*.y*ml 2>/dev/null | head -1 || true)"
+          if [ -z "$wf" ]; then
+            echo "::error::Could not find the workflow file in .github/workflows/"; exit 1
+          fi
+          for step in \
+            "Build dependencies for macOS 10.13" \
+            "Configure Mixxx CMake Project" \
+            "Build Mixxx Application" \
+            "Install Mixxx" \
+            "Assemble Mixxx.app bundle" \
+            "Bundle Qt frameworks with macdeployqt" \
+            "Finalize bundle using strict 10.13 validation" \
+            "Final symbol check against the macOS 10.13 SDK" \
+            "Create DMG" \
+            "Upload macOS DMG"; do
+            if ! grep -q "name: $step" "$wf"; then
+              echo "::error::The workflow file is incomplete: the step '$step' is missing. Upload the full file again (do not paste it)."
+              problems=1
+            fi
+          done
+
+          triplet=source_repo/triplets/x64-osx-min1013-release.cmake
+          if ! grep -q "VCPKG_OSX_DEPLOYMENT_TARGET 10.13" "$triplet" 2>/dev/null; then
+            echo "::error::$triplet is missing or does not set VCPKG_OSX_DEPLOYMENT_TARGET 10.13"
+            problems=1
+          fi
+
+          for port in ffmpeg chromaprint libebur128 fftw3 libflac libvorbis soundtouch \
+                      portaudio hidapi portmidi rubberband libsamplerate libsndfile \
+                      libusb mpg123 mp3lame opus; do
+            if ! grep -v '^[[:space:]]*#' source_repo/vcpkg-ports.txt | grep -q "^$port\(\[\|[[:space:]]*$\)"; then
+              echo "::error::source_repo/vcpkg-ports.txt does not list the port '$port'"
+              problems=1
+            fi
+          done
+
+          if [ "$problems" -ne 0 ]; then exit 1; fi
+          echo "Workflow file, triplet and ports list are all complete."
 
       - name: Restore macOS 10.13 dependencies
         id: deps-cache
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/deps-1013
-          key: deps-1013-v3-${{ runner.os }}-${{ hashFiles('source_repo/triplets/*.cmake', 'source_repo/vcpkg-ports.txt') }}
+          key: deps-1013-v4-${{ runner.os }}-${{ hashFiles('source_repo/triplets/*.cmake', 'source_repo/vcpkg-ports.txt') }}
+
+      # vcpkg keeps a binary cache of every port it has built. Saving it even when the
+      # job fails means a retry only rebuilds what had not finished yet.
+      - name: Restore vcpkg binary cache
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/vcpkg-archives
+          key: vcpkg-archives-v1-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-archives-v1-${{ runner.os }}-
 
       - name: Build dependencies for macOS 10.13
         if: steps.deps-cache.outputs.cache-hit != 'true'
@@ -48,21 +108,71 @@ jobs:
           set -euo pipefail
           set -f
 
-          brew install nasm pkg-config autoconf automake libtool
+          export VCPKG_DEFAULT_BINARY_CACHE="$GITHUB_WORKSPACE/vcpkg-archives"
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+
+          # Ports built with autotools (libusb, ...) need these. Homebrew installs GNU
+          # libtool as glibtool; the gnubin directory provides the plain names.
+          brew install nasm pkg-config autoconf automake libtool autoconf-archive
+
+          # vcpkg's autotools ports (libusb) require a program called "libtoolize".
+          # Homebrew installs GNU libtool as "glibtoolize", so provide the plain name.
+          # Only libtoolize is aliased: Apple's own /usr/bin/libtool must stay first.
+          mkdir -p "$RUNNER_TEMP/shims"
+          GLT="$(command -v glibtoolize || true)"
+          if [ -n "$GLT" ]; then ln -sf "$GLT" "$RUNNER_TEMP/shims/libtoolize"; fi
+          export PATH="$RUNNER_TEMP/shims:$PATH:$(brew --prefix libtool)/libexec/gnubin"
+          export LIBTOOLIZE=glibtoolize
+          if ! command -v libtoolize >/dev/null 2>&1; then
+            echo "::error::libtoolize still not found after installing libtool"; exit 1
+          fi
+          echo "libtoolize -> $(command -v libtoolize)"
 
           git clone --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
-          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
 
           PORTS=$(grep -v '^[[:space:]]*#' source_repo/vcpkg-ports.txt | grep -v '^[[:space:]]*$' | tr '\n' ' ')
-          "$RUNNER_TEMP/vcpkg/vcpkg" install $PORTS \
+
+          # Check every port name now and report ALL unknown ones at once,
+          # instead of failing on the first one minutes into the install.
+          bad_ports=0
+          for p in $PORTS; do
+            base="${p%%\[*}"
+            if [ ! -d "$RUNNER_TEMP/vcpkg/ports/$base" ]; then
+              similar="$(ls "$RUNNER_TEMP/vcpkg/ports" | grep -i -- "${base#lib}" | head -6 | tr '\n' ' ' || true)"
+              echo "::error::vcpkg has no port named '$base'. Similar names: ${similar:-none}"
+              bad_ports=1
+            fi
+          done
+          if [ "$bad_ports" -ne 0 ]; then exit 1; fi
+          echo "All port names exist."
+
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+          VCPKG_LOG="$RUNNER_TEMP/vcpkg-install.log"
+          if ! "$RUNNER_TEMP/vcpkg/vcpkg" install $PORTS \
             --overlay-triplets="$PWD/source_repo/triplets" \
             --triplet x64-osx-min1013-release \
             --x-install-root="$PWD/deps-1013" \
             --x-buildtrees-root="$RUNNER_TEMP/vcpkg-buildtrees" \
-            --clean-after-build
+            --clean-after-build 2>&1 | tee "$VCPKG_LOG"; then
+            echo
+            echo "=============== vcpkg failed: first error messages ==============="
+            grep -n -B3 -A25 -m3 -E 'CMake Error|^error: ' "$VCPKG_LOG" | head -150 || true
+            echo
+            echo "=============== vcpkg failed: error logs (last 70 lines each) ==============="
+            for f in $(find "$RUNNER_TEMP/vcpkg-buildtrees" -name '*err.log' -size +0 2>/dev/null | head -8); do
+              echo; echo "----- $f"; tail -n 70 "$f"
+            done
+            for f in $(find "$RUNNER_TEMP/vcpkg-buildtrees" -name 'config.log' 2>/dev/null | head -2); do
+              echo; echo "----- $f (last 40 lines)"; tail -n 40 "$f"
+            done
+            exit 1
+          fi
 
           DEPS="$PWD/deps-1013/x64-osx-min1013-release"
 
+          # protoc is run during the Mixxx build. CMake strips build rpaths on install,
+          # so without INSTALL_RPATH protoc cannot find libprotobuf and dies with
+          # "Library not loaded: @rpath/libprotobuf...".
           git clone --depth 1 --branch v21.12 \
             https://github.com/protocolbuffers/protobuf.git "$RUNNER_TEMP/protobuf"
           cmake -S "$RUNNER_TEMP/protobuf/cmake" -B "$RUNNER_TEMP/protobuf/build" \
@@ -92,18 +202,89 @@ jobs:
           cmake --build "$RUNNER_TEMP/libkeyfinder/build" --parallel
           cmake --install "$RUNNER_TEMP/libkeyfinder/build"
 
+      - name: Save vcpkg binary cache
+        if: always() && steps.deps-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/vcpkg-archives
+          key: vcpkg-archives-v1-${{ runner.os }}-${{ github.run_id }}
+
       - name: Check every dependency really targets macOS 10.13
         run: |
           python3 "$SCRIPTS_DIR/finalize_bundle.py" \
             --scan-dir "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
             --min-macos 10.13
 
+      # Fails within a minute if a library Mixxx needs is not in the dependency set,
+      # instead of ~40 minutes later at the Mixxx configure step.
+      - name: Check dependency inventory
+        run: |
+          set -uo pipefail
+          DEPS="$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release"
+          LIB="$DEPS/lib"
+          missing=0
+          check() {
+            label="$1"; shift
+            for pat in "$@"; do
+              if ls "$LIB"/$pat >/dev/null 2>&1; then
+                printf '  ok       %s\n' "$label"; return 0
+              fi
+            done
+            printf '  MISSING  %s   (looked for: %s)\n' "$label" "$*"
+            missing=1
+          }
+          echo "Libraries expected in $LIB:"
+          check "ffmpeg: avcodec"     'libavcodec*.dylib'
+          check "ffmpeg: avformat"    'libavformat*.dylib'
+          check "ffmpeg: avutil"      'libavutil*.dylib'
+          check "ffmpeg: swscale"     'libswscale*.dylib'
+          check "ffmpeg: swresample"  'libswresample*.dylib'
+          check "FLAC"                'libFLAC.*dylib'
+          check "ogg"                 'libogg*.dylib'
+          check "vorbis"              'libvorbis.*dylib'
+          check "vorbisenc"           'libvorbisenc*.dylib'
+          check "vorbisfile"          'libvorbisfile*.dylib'
+          check "opus"                'libopus*.dylib'
+          check "mp3lame (LAME)"      'libmp3lame*.dylib' 'libmp3lame*.a'
+          check "mpg123"              'libmpg123*.dylib'
+          check "libsndfile"          'libsndfile*.dylib'
+          check "libsamplerate"       'libsamplerate*.dylib'
+          check "SoundTouch"          'libSoundTouch*.dylib'
+          check "rubberband"          'librubberband*.dylib'
+          check "chromaprint"         'libchromaprint*.dylib'
+          check "ebur128"             'libebur128*.dylib'
+          check "fftw3"               'libfftw3*.dylib'
+          check "hidapi"              'libhidapi*.dylib'
+          check "libusb"              'libusb*.dylib'
+          check "portaudio"           'libportaudio*.dylib'
+          check "portmidi"            'libportmidi*.dylib'
+          check "protobuf"            'libprotobuf.*dylib'
+          check "protobuf-lite"       'libprotobuf-lite*.dylib'
+          check "libkeyfinder"        'libkeyfinder*.dylib'
+          if [ ! -f "$DEPS/include/lame/lame.h" ]; then
+            echo "  MISSING  header lame/lame.h"; missing=1
+          fi
+          echo
+          echo "Everything under $DEPS that mentions lame:"
+          find "$DEPS" -iname '*lame*' 2>/dev/null | head -20 || true
+          echo
+          echo "All libraries present:"
+          ls "$LIB" | grep -E '\.(dylib|a)$' | grep -v -- '-[0-9]' | head -120 || true
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::Some libraries are missing from the dependency set. Add the matching ports to vcpkg-ports.txt (the file shipped with this workflow lists them all) and rebuild."
+            exit 1
+          fi
+          echo "Inventory complete."
+
+      # Saved only after the dependencies passed the check, and immediately,
+      # so a later failure in the job no longer throws the build away.
       - name: Save macOS 10.13 dependencies
         if: steps.deps-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/deps-1013
-          key: deps-1013-v3-${{ runner.os }}-${{ hashFiles('source_repo/triplets/*.cmake', 'source_repo/vcpkg-ports.txt') }}
+          key: deps-1013-v4-${{ runner.os }}-${{ hashFiles('source_repo/triplets/*.cmake', 'source_repo/vcpkg-ports.txt') }}
 
       - name: Restore macOS 10.13 SDK
         id: sdk-cache
@@ -204,14 +385,16 @@ jobs:
             rm -f "/usr/local/bin/openssl"
           fi
 
+      # Header-only packages (cpp-gsl, boost) still come from Homebrew. The Mixxx
+      # configure step adds /usr/local/include at the LOWEST priority (-idirafter) so
+      # the app finds them without ever shadowing the vcpkg 10.13 libraries.
       - name: Install Remaining Core Mixxx Dependencies
         run: |
           set -euo pipefail
           brew update
           brew install \
             googletest google-benchmark \
-            boost cpp-gsl pkg-config \
-            hidapi portmidi libusb
+            boost cpp-gsl pkg-config
 
       - name: Install macdeployqt via Homebrew
         run: |
@@ -256,6 +439,8 @@ jobs:
           cmake --build qtkeychain_build --config Release --parallel 4
           cmake --install qtkeychain_build --config Release
 
+      # Restored from your earlier workflow: Mixxx 2.4 needs TagLib, and the
+      # Homebrew taglib is no longer installed.
       - name: Checkout TagLib 1.11.1
         uses: actions/checkout@v4
         with:
@@ -288,6 +473,24 @@ jobs:
           export CMAKE_PREFIX_PATH="$DEPS;${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}"
           qmake -v
 
+          # The video backport (videodecoder.cpp) calls libswscale directly, but Mixxx's
+          # CMake does not link it. Add it to the executable link line (this line existed
+          # in the earlier workflow). pkg-config resolves to the vcpkg 10.13 build.
+          SWSCALE_LDFLAGS="$(pkg-config --libs libswscale 2>/dev/null || true)"
+          if [ -z "$SWSCALE_LDFLAGS" ]; then
+            SWSCALE_LDFLAGS="-L$DEPS/lib -lswscale"
+          fi
+          echo "SWSCALE_LDFLAGS: $SWSCALE_LDFLAGS"
+
+          # Point Mixxx's FindMp3lame at the vcpkg copy explicitly (variable names are
+          # the ones CMake reported as missing).
+          LAME_LIB="$(ls "$DEPS"/lib/libmp3lame*.dylib "$DEPS"/lib/libmp3lame*.a 2>/dev/null | head -1 || true)"
+          LAME_FLAGS=""
+          if [ -n "$LAME_LIB" ] && [ -f "$DEPS/include/lame/lame.h" ]; then
+            LAME_FLAGS="-Dmp3lame_LIBRARY=$LAME_LIB -Dmp3lame_INCLUDE_DIR=$DEPS/include"
+          fi
+          echo "LAME hints: ${LAME_FLAGS:-none found}"
+
           QT5KEYCHAIN_CONFIG="$(
             find "${QTKEYCHAIN_PREFIX}" -type f \
               \( -name "Qt5KeychainConfig.cmake" -o -name "qt5keychain-config.cmake" \) \
@@ -302,29 +505,48 @@ jobs:
           cmake -S source_repo/source -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DCMAKE_EXE_LINKER_FLAGS="-framework AudioToolbox -framework AppKit -framework CoreVideo -framework CoreMedia -L$DEPS/lib -lswscale -lavcodec -lavformat -lavutil -lswresample" \
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/build/install" \
+            -DCMAKE_EXE_LINKER_FLAGS="-framework AudioToolbox -framework AppKit -framework CoreVideo -framework CoreMedia ${SWSCALE_LDFLAGS}" \
+            -DCMAKE_CXX_FLAGS="-idirafter /usr/local/include" \
             -DTESTING=OFF \
             -DBUILD_TESTING=OFF \
             -DBUILD_BENCH=OFF \
             -DOPTIMIZE=portable \
             -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
-            -DQt5Keychain_DIR="$QT5KEYCHAIN_DIR"
+            -DQt5Keychain_DIR="$QT5KEYCHAIN_DIR" \
+            $LAME_FLAGS
 
       - name: Build Mixxx Application
         run: |
           set -euo pipefail
-          cmake --build build --config Release --parallel 4 --target mixxx
+          LOG="$RUNNER_TEMP/mixxx-build.log"
+          if ! cmake --build build --config Release --parallel 4 2>&1 | tee "$LOG"; then
+            echo
+            echo "=============== build failed: first errors (with context) ==============="
+            grep -n -B8 -A14 -m4 -E 'error:|Undefined symbols|ld: symbol|ld: library not found|fatal error|\*\*\* \[.*\] Error' "$LOG" | head -220 || true
+            echo
+            echo "=============== build failed: last 25 lines ==============="
+            tail -n 25 "$LOG"
+            exit 1
+          fi
+
+      - name: Install Mixxx
+        run: |
+          set -euo pipefail
+          cmake --install build --config Release
+          echo "=== Top-level contents of build/install ==="
+          ls -la "${{ github.workspace }}/build/install"
 
       - name: Assemble Mixxx.app bundle
         run: |
           set -euo pipefail
           WORKSPACE="${GITHUB_WORKSPACE}"
-          MXXX_BIN="${WORKSPACE}/build/mixxx" 
+          INSTALL_DIR="${WORKSPACE}/build/install"
           APP="${WORKSPACE}/build/Mixxx.app"
 
-          if [ ! -f "${MXXX_BIN}" ]; then
-            echo "ERROR: ${MXXX_BIN} not found."
-            ls -la "${WORKSPACE}/build" || true
+          if [ ! -f "${INSTALL_DIR}/bin/mixxx" ]; then
+            echo "ERROR: ${INSTALL_DIR}/bin/mixxx not found."
+            ls -la "${INSTALL_DIR}/bin" || true
             exit 1
           fi
 
@@ -333,11 +555,11 @@ jobs:
           mkdir -p "${APP}/Contents/Resources"
           mkdir -p "${APP}/Contents/Frameworks"
 
-          cp "${MXXX_BIN}" "${APP}/Contents/MacOS/mixxx"
+          cp "${INSTALL_DIR}/bin/mixxx" "${APP}/Contents/MacOS/mixxx"
           chmod +x "${APP}/Contents/MacOS/mixxx"
 
-          if [ -d "${WORKSPACE}/source_repo/res" ]; then
-            cp -R "${WORKSPACE}/source_repo/res/." "${APP}/Contents/Resources/"
+          if [ -d "${INSTALL_DIR}/share/mixxx" ]; then
+            cp -R "${INSTALL_DIR}/share/mixxx/." "${APP}/Contents/Resources/"
           fi
 
           cat > "${APP}/Contents/Info.plist" <<'PLIST'
@@ -433,6 +655,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
-          path: Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg
+          path: Mixxx-2.4-VIDEO-BACKPORT-macos-10.13.dmg
           if-no-files-found: error
           retention-days: 7
