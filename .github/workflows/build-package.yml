@@ -7,6 +7,11 @@ on:
       - master
   workflow_dispatch:
 
+# A newer push replaces an older run that is still going (no wasted hours on stale code).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-macos-intel:
     runs-on: macos-15-intel
@@ -625,6 +630,57 @@ jobs:
             -libpath=/usr/local/lib \
             -libpath=/usr/local/opt/qt@5/lib \
             -libpath="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib" || true
+
+      # macdeployqt also copies Qt's ODBC and PostgreSQL drivers. Those pull Homebrew's
+      # libiodbc, libpq, OpenSSL and Kerberos into the app (built for macOS 14/15, which
+      # cannot load on 10.13). Mixxx only uses the SQLite driver, so drop the rest and then
+      # remove every library that nothing in the app links against any more.
+      - name: Remove unneeded SQL drivers and the libraries they pulled in
+        run: |
+          set -euo pipefail
+          APP="${MXXX_APP_PATH}"
+          if [ -d "$APP/Contents/PlugIns/sqldrivers" ]; then
+            find "$APP/Contents/PlugIns/sqldrivers" -type f ! -name 'libqsqlite.dylib' -print -delete
+          fi
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, os.environ["SCRIPTS_DIR"])
+          from finalize_bundle import bundle_machos
+
+          app = os.environ["MXXX_APP_PATH"]
+          fw = os.path.join(app, "Contents", "Frameworks")
+          files = {p: info for p, info in bundle_machos(app)}
+
+          # loose libraries in Frameworks, by every name they can be referenced by
+          by_name = {}
+          for name in os.listdir(fw):
+              p = os.path.join(fw, name)
+              real = os.path.realpath(p)
+              if real in files and os.path.dirname(real) == os.path.realpath(fw):
+                  by_name[name] = real
+
+          # everything that is not a loose library is a root: the executable, plugins, Qt frameworks
+          roots = [p for p in files if os.path.dirname(p) != os.path.realpath(fw)]
+          seen, queue = set(roots), list(roots)
+          while queue:
+              p = queue.pop()
+              for _kind, dep in files[p]["deps"]:
+                  q = by_name.get(os.path.basename(dep))
+                  if q and q not in seen:
+                      seen.add(q)
+                      queue.append(q)
+
+          unused = sorted({real for real in by_name.values() if real not in seen})
+          for real in unused:
+              os.remove(real)
+              print("removed unused library:", os.path.basename(real))
+          for name in os.listdir(fw):
+              p = os.path.join(fw, name)
+              if os.path.islink(p) and not os.path.exists(p):
+                  os.remove(p)
+                  print("removed dangling link:", name)
+          print("kept %d loose libraries, removed %d unused" % (len(seen & set(by_name.values())), len(unused)))
+          PY
 
       - name: Finalize bundle using strict 10.13 validation
         run: |
