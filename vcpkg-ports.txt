@@ -33,3 +33,4 @@ libusb
 mpg123
 mp3lame
 opus
+openssl
