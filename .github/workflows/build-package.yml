@@ -451,6 +451,8 @@ jobs:
           QTKEYCHAIN_PREFIX="$WORKSPACE/qtkeychain_install"
           cmake -S qtkeychain_src -B qtkeychain_build \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
             -DCMAKE_INSTALL_PREFIX="$QTKEYCHAIN_PREFIX" \
             -DBUILD_WITH_QT6=OFF \
@@ -690,6 +692,31 @@ jobs:
             --search "${GITHUB_WORKSPACE}/qtkeychain_install/lib" \
             --min-macos 10.13
 
+      - name: Explain which files need the too-new libraries
+        if: failure()
+        run: |
+          if [ -z "${MXXX_APP_PATH:-}" ] || [ ! -d "$MXXX_APP_PATH" ]; then exit 0; fi
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, os.environ["SCRIPTS_DIR"])
+          from finalize_bundle import bundle_machos, target_info
+          app = os.environ["MXXX_APP_PATH"]
+          files = {p: i for p, i in bundle_machos(app)}
+          bad = []
+          for p in files:
+              minos, chained = target_info(p)
+              if (minos and minos > (10, 13)) or chained:
+                  bad.append((p, minos, chained))
+          print("Files built for a newer macOS than 10.13, or using chained fixups:")
+          for p, minos, chained in sorted(bad):
+              base = os.path.basename(p)
+              users = sorted(os.path.relpath(q, app) for q, i in files.items() if q != p and any(os.path.basename(d) == base for _k, d in i["deps"]))
+              needs = [d for _k, d in files[p]["deps"] if not d.startswith(("/usr/lib/", "/System/"))]
+              print("  %s (macOS %s%s)" % (os.path.relpath(p, app), "%d.%d" % minos if minos else "?", ", chained fixups" if chained else ""))
+              print("    used by: " + (", ".join(users) if users else "nothing (safe to remove)"))
+              print("    itself needs: " + (", ".join(needs) if needs else "-"))
+          PY
+
       - name: Final symbol check against the macOS 10.13 SDK
         run: |
           python3 "$SCRIPTS_DIR/check_sdk_symbols.py" \
@@ -723,6 +750,7 @@ jobs:
           ls -lh "$OUT"
 
       - name: Upload macOS DMG
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
