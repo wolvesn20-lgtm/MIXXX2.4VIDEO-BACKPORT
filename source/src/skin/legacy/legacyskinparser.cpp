@@ -1390,27 +1390,6 @@ QWidget* LegacySkinParser::parseSpinny(const QDomElement& node) {
     return pSpinny;
 #endif
     }
-QWidget* LegacySkinParser::parseVideoWidget(const QDomElement& node) {
-#ifdef MIXXX_USE_QML
-    if (CmdlineArgs::Instance().isQml()) {
-        return nullptr;
-    }
-#endif
-    if (CmdlineArgs::Instance().getSafeMode()) {
-        WLabel* dummy = new WLabel(m_pParent);
-        dummy->setText(tr("Safe Mode Enabled"));
-        return dummy;
-    }
-    QString group = lookupNodeGroup(node);
-    VideoWidget* widget = new VideoWidget(group, m_pParent);
-     //commonWidgetSetup(node, widget);
-    BaseTrackPlayer* pPlayer = m_pPlayerManager->getPlayer(group);
-    if (pPlayer) {
-        QObject::connect(pPlayer, &BaseTrackPlayer::newTrackLoaded,
-                widget, &VideoWidget::slotLoadTrack);
-    }
-    return widget;
-    }
 QWidget* LegacySkinParser::parseVuMeter(const QDomElement& node) {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     Q_UNUSED(node);
