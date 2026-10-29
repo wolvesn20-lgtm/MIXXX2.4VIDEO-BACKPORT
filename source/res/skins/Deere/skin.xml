@@ -191,6 +191,10 @@
       <Layout>vertical</Layout>
       <Children>
         <Template src="skins:Deere/tool_bar.xml"/>
+        <VideoWidget>
+        <Pos>50, 50</Pos>
+     <Size>640, 480</Size>
+     </VideoWidget>
 
         <!-- regular or maximized library -->
         <WidgetStack currentpage="[Skin],show_maximized_library">
