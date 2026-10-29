@@ -1074,7 +1074,8 @@ QWidget* LegacySkinParser::parseVisual(const QDomElement& node) {
     return viewer;
 #endif
 }
-
+QWidget* LegacySkinParser::parseVideoWidget(const QDomElement& node) {
+    QString group = lookupNodeGroup(node);
 auto* widget = new VideoWidget(group, nullptr);
 widget->setWindowTitle("Mixxx Video Output");
 widget->resize(640, 480);
