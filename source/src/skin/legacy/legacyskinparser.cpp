@@ -546,6 +546,8 @@ QList<QWidget*> LegacySkinParser::parseNode(const QDomElement& node) {
         result = wrapWidget(parseTrackProperty(node));
     } else if (nodeName == "StarRating") {
         result = wrapWidget(parseStarRating(node));
+    } else if (nodeName == "VideoWidget") {
+    result = wrapWidget(parseVideoWidget(node));
     } else if (nodeName == "VuMeter") {
         result = wrapWidget(parseVuMeter(node));
     } else if (nodeName == "VideoWidget") {
@@ -1076,10 +1078,11 @@ QWidget* LegacySkinParser::parseVisual(const QDomElement& node) {
 }
 QWidget* LegacySkinParser::parseVideoWidget(const QDomElement& node) {
     QString group = lookupNodeGroup(node);
-auto* widget = new VideoWidget(group, nullptr);
-widget->setWindowTitle("Mixxx Video Output");
-widget->resize(640, 480);
-widget->show();
+    auto* widget = new VideoWidget(group, nullptr);
+    widget->setWindowTitle("Mixxx Video Output");
+    widget->resize(640, 480);
+    widget->setWindowFlags(Qt::Window); 
+    widget->show();
     if (auto* player = m_pPlayerManager->getPlayer(group)) {
         connect(player,
                 &BaseTrackPlayer::newTrackLoaded,
