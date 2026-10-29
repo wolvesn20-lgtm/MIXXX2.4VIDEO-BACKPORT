@@ -1075,11 +1075,10 @@ QWidget* LegacySkinParser::parseVisual(const QDomElement& node) {
 #endif
 }
 
-QWidget* LegacySkinParser::parseVideoWidget(const QDomElement& node) {
-    const QString group = lookupNodeGroup(node);
-    auto* widget = new VideoWidget(group, m_pParent);
-    widget->setObjectName(node.nodeName());
-
+auto* widget = new VideoWidget(group, nullptr);
+widget->setWindowTitle("Mixxx Video Output");
+widget->resize(640, 480);
+widget->show();
     if (auto* player = m_pPlayerManager->getPlayer(group)) {
         connect(player,
                 &BaseTrackPlayer::newTrackLoaded,
