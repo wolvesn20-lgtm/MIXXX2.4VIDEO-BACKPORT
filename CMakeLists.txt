@@ -3541,4 +3541,6 @@ if(APPLE AND MACOS_BUNDLE)
 
     configure_file(cmake/modules/BundleInstall.cmake.in "${CMAKE_CURRENT_BINARY_DIR}/BundleInstall.cmake" @ONLY)
     install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/BundleInstall.cmake")
-endif()
+	mixxx_add_skin(MixxxxxVideo)
+    endif()
+
