@@ -413,7 +413,7 @@ jobs:
           set -euo pipefail
           brew update
           brew install \
-            googletest  \
+            googletest google-benchmark \
             boost cpp-gsl pkg-config
 
       - name: Install macdeployqt via Homebrew
