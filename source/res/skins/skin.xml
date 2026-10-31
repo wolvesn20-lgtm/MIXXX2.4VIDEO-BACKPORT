@@ -536,8 +536,17 @@
       <SizePolicy>me,me</SizePolicy>
       <Children>
 
-        <Template src="skins:LateNight/toolbar.xml"/>
-    <Template src="skins:LateNight/video_output.xml"/>
+       <Template src="skins:LateNight/toolbar.xml"/>
+    <WidgetGroup>
+       <ObjectName>VideoContainer</ObjectName>
+        <Layout>vertical</Layout>
+        <SizePolicy>me,min</SizePolicy>
+        <Children>
+          <VideoWidget>
+            <Size>960,540</Size>
+         </VideoWidget>
+       </Children>
+    </WidgetGroup>
 
         <!-- regular/maximized library  |  skin settings menu -->
         <WidgetGroup>
@@ -588,14 +597,15 @@
                         </WidgetGroup><!-- ToolbarDeckSpacer -->
 
                         <WidgetGroup>
-                          <Layout>horizontal</Layout>
-                          <SizePolicy>me,max</SizePolicy>
-                          <Children>
-                            <Template src="skins:LateNight/decks/decks_left.xml"/>
-                            <Template src="skins:LateNight/mixer.xml"/>
-                            <Template src="skins:LateNight/decks/decks_right.xml"/>
-                          </Children>
-                        </WidgetGroup>
+                           <ObjectName>VideoContainer</ObjectName>
+                           <Layout>vertical</Layout>
+                           <SizePolicy>me,min</SizePolicy>
+                           <Children>
+                             <VideoWidget>
+                               <Size>960,540</Size>
+                           </VideoWidget>
+                        </Children>
+                      </WidgetGroup>
 
                         <Template src="skins:LateNight/fx_rack.xml"/>
                         <Template src="skins:LateNight/samplers_rack.xml"/>
