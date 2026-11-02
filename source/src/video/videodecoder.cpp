@@ -100,10 +100,7 @@ void VideoDecoder::run() {
     
     // ... clean up ...
 } // <--- The function should only close here at the very end
-        QMutexLocker locker(&m_mutex);
-        path = m_path;
-    }
-
+        
     if (path.isEmpty()) {
         emit openFailed(tr("No video path set"));
         return;
