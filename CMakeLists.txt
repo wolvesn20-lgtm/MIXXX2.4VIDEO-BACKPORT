@@ -2088,9 +2088,12 @@ find_package(GTest CONFIG REQUIRED)
 set_target_properties(mixxx-test PROPERTIES AUTOMOC ON)
 target_link_libraries(mixxx-test PRIVATE mixxx-lib mixxx-gitinfostore GTest::gtest GTest::gmock)
 
-find_package(benchmark)
-target_link_libraries(mixxx-test PRIVATE benchmark::benchmark)
-
+if(BUILD_BENCH)
+    target_link_libraries(mixxx-test PRIVATE
+        # ... other libraries ...
+        benchmark::benchmark
+    )
+endif()
 # Test Suite
 include(CTest)
 include(GoogleTest)
