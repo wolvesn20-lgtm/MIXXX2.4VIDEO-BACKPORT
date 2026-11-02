@@ -1078,11 +1078,13 @@ QWidget* LegacySkinParser::parseVisual(const QDomElement& node) {
 }
 QWidget* LegacySkinParser::parseVideoWidget(const QDomElement& node) {
     QString group = lookupNodeGroup(node);
-    auto* widget = new VideoWidget(group, nullptr);
-    widget->setWindowTitle("Mixxx Video Output");
-    widget->resize(640, 480);
-    widget->setWindowFlags(Qt::Window); 
-    widget->show();
+    
+    // 1. Attach it to the layout! (m_pParent)
+    auto* widget = new VideoWidget(group, m_pParent); 
+    
+    // 2. Remove the setWindowFlags and show() lines!
+    // The XML layout will handle the size and visibility.
+    
     if (auto* player = m_pPlayerManager->getPlayer(group)) {
         connect(player,
                 &BaseTrackPlayer::newTrackLoaded,
