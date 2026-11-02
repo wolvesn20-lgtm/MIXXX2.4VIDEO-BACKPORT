@@ -87,14 +87,19 @@ void VideoDecoder::close() {
 }
 
 void VideoDecoder::run() {
+    // ... set up ...
+    
     while (m_running) {
-        // 1. Decode a frame
-        // 2. Calculate the time it should wait
-        int waitTime = 1000 / m_frameRate; 
-        // 3. Sleep
-        QThread::msleep(waitTime); 
+        // Put your wait logic HERE inside the loop
+        int waitTime = 1000 / m_frameRate;
+        QMutexLocker locker(&m_mutex);
+        path = m_path;
+        
+        // ... decode frame code ...
     }
-}
+    
+    // ... clean up ...
+} // <--- The function should only close here at the very end
         QMutexLocker locker(&m_mutex);
         path = m_path;
     }
