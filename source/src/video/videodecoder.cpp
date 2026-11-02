@@ -87,8 +87,14 @@ void VideoDecoder::close() {
 }
 
 void VideoDecoder::run() {
-    QString path;
-    {
+    while (m_running) {
+        // 1. Decode a frame
+        // 2. Calculate the time it should wait
+        int waitTime = 1000 / m_frameRate; 
+        // 3. Sleep
+        QThread::msleep(waitTime); 
+    }
+}
         QMutexLocker locker(&m_mutex);
         path = m_path;
     }
