@@ -13,6 +13,8 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include "control/controlproxy.h" // NEW: Needed for the audio clock
+
 namespace {
 
 QImage frameToQImage(const AVFrame* frame, int width, int height) {
@@ -38,8 +40,10 @@ QImage frameToQImage(const AVFrame* frame, int width, int height) {
 
 } // namespace
 
-VideoDecoder::VideoDecoder(QObject* parent)
-        : QThread(parent) {
+// NEW: Constructor now takes the group and sets up the audio clock proxy
+VideoDecoder::VideoDecoder(const QString& group, QObject* parent)
+        : QThread(parent), m_group(group) {
+    m_pAudioClock = new ControlProxy(m_group, "video_audio_clock", this);
 }
 
 VideoDecoder::~VideoDecoder() {
@@ -153,12 +157,6 @@ void VideoDecoder::run() {
         return;
     }
 
-    int waitTimeMs = 33;
-    AVRational frameRate = formatCtx->streams[videoStreamIndex]->avg_frame_rate;
-    if (frameRate.den > 0 && frameRate.num > 0) {
-        waitTimeMs = 1000 / av_q2d(frameRate);
-    }
-
     AVPacket* packet = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
 
@@ -197,14 +195,31 @@ void VideoDecoder::run() {
         av_packet_unref(packet);
 
         while (avcodec_receive_frame(codecCtx, frame) == 0) {
+            // --- THE SYNC ENGINE ---
+            if (m_pAudioClock) {
+                double audioTimeMs = m_pAudioClock->get() * 1000.0;
+                double frameTimeMs = (frame->pts * 1000.0) / av_q2d(formatCtx->streams[videoStreamIndex]->time_base);
+                
+                // If video is ahead of the audio clock, wait for the audio.
+                if (frameTimeMs > audioTimeMs + 50) {
+                    QThread::msleep(10);
+                } 
+                // If video is behind the audio clock, drop this frame.
+                else if (frameTimeMs < audioTimeMs - 50) {
+                    av_frame_unref(frame);
+                    continue; 
+                }
+            }
+            // -----------------------
+
             QImage image = frameToQImage(frame, codecCtx->width, codecCtx->height);
             if (!image.isNull()) {
                 emit frameDecoded(image);
             }
             av_frame_unref(frame);
             
-            // THE SPEED FIX
-            QThread::msleep(waitTimeMs);
+            // Tiny sleep to prevent the CPU from melting down while paused
+            QThread::msleep(1);
 
             {
                 QMutexLocker locker(&m_mutex);
