@@ -1,106 +1,10 @@
-#include "video/videodecoder.h"
-
-#include "video/ffmpeg_compat.h"
-
-#include <QFileInfo>
-#include <QMutexLocker>
-
-#include <cstring>
-
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libavutil/imgutils.h>
-#include <libswscale/swscale.h>
-}
-
-namespace {
-
-QImage frameToQImage(const AVFrame* frame, int width, int height) {
-    QImage image(width, height, QImage::Format_RGB32);
-
-    SwsContext* sws = sws_getContext(
-            width, height, static_cast<AVPixelFormat>(frame->format),
-            width, height, AV_PIX_FMT_BGRA,
-            SWS_BILINEAR, nullptr, nullptr, nullptr);
-
-    if (!sws) {
-        return QImage();
-    }
-
-    uint8_t* dstData[4] = {image.bits(), nullptr, nullptr, nullptr};
-    int dstLinesize[4] = {static_cast<int>(image.bytesPerLine()), 0, 0, 0};
-
-    sws_scale(sws, frame->data, frame->linesize, 0, height, dstData, dstLinesize);
-    sws_freeContext(sws);
-
-    return image;
-}
-
-} // namespace
-
-VideoDecoder::VideoDecoder(QObject* parent)
-        : QThread(parent) {
-}
-
-VideoDecoder::~VideoDecoder() {
-    {
-        QMutexLocker locker(&m_mutex);
-        m_abort = true;
-    }
-    if (!wait(5000)) {
-        terminate();
-        wait(1000);
-    }
-}
-
-void VideoDecoder::openFile(const QString& path) {
-    {
-        QMutexLocker locker(&m_mutex);
-        m_path = path;
-        m_abort = false;
-    }
-
-    if (path.isEmpty()) {
-        emit openFailed(tr("Empty video path"));
-        return;
-    }
-    if (!QFileInfo::exists(path)) {
-        emit openFailed(tr("File does not exist: %1").arg(path));
-        return;
-    }
-
-    if (!isRunning()) {
-        start();
-    }
-}
-
-void VideoDecoder::close() {
-    {
-        QMutexLocker locker(&m_mutex);
-        m_abort = true;
-    }
-    if (!wait(5000)) {
-        terminate();
-        wait(1000);
-    }
-}
-
 void VideoDecoder::run() {
-    // ... set up ...
-    
-    while (m_running) {
-        // Put your wait logic HERE inside the loop
-        int waitTime = 1000 / m_frameRate;
+    QString path;
+    {
         QMutexLocker locker(&m_mutex);
         path = m_path;
-        
-        // ... decode frame code ...
     }
-    
-    // ... clean up ...
-} // <--- The function should only close here at the very end
-        
+
     if (path.isEmpty()) {
         emit openFailed(tr("No video path set"));
         return;
@@ -133,7 +37,6 @@ void VideoDecoder::run() {
     }
 
     AVCodecParameters* codecParams = formatCtx->streams[videoStreamIndex]->codecpar;
-
     const AVCodec* codec = avcodec_find_decoder(codecParams->codec_id);
     if (!codec) {
         emit openFailed(tr("No decoder found for video codec"));
@@ -160,6 +63,13 @@ void VideoDecoder::run() {
         avcodec_free_context(&codecCtx);
         avformat_close_input(&formatCtx);
         return;
+    }
+
+    // Calculate wait time to stop the fast-forward
+    int waitTimeMs = 33; // Default to ~30fps
+    AVRational frameRate = formatCtx->streams[videoStreamIndex]->avg_frame_rate;
+    if (frameRate.den > 0 && frameRate.num > 0) {
+        waitTimeMs = 1000 / av_q2d(frameRate);
     }
 
     AVPacket* packet = av_packet_alloc();
@@ -205,6 +115,9 @@ void VideoDecoder::run() {
                 emit frameDecoded(image);
             }
             av_frame_unref(frame);
+            
+            // THE SPEED FIX: Sleep between frames
+            QThread::msleep(waitTimeMs);
 
             {
                 QMutexLocker locker(&m_mutex);
@@ -235,4 +148,4 @@ void VideoDecoder::run() {
     av_frame_free(&frame);
     avcodec_free_context(&codecCtx);
     avformat_close_input(&formatCtx);
-}
+}  
