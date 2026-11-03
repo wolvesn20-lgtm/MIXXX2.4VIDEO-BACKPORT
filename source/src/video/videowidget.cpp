@@ -11,7 +11,7 @@
 VideoWidget::VideoWidget(const QString& group, QWidget* parent)
         : QWidget(parent),
           m_group(group),
-          m_decoder(new VideoDecoder(this)) {
+          m_decoder(new VideoDecoder(group, this)) { // <-- FIXED: Passed group here
     setMinimumSize(160, 90);
     setAutoFillBackground(true);
     connect(m_decoder, &VideoDecoder::frameDecoded,
