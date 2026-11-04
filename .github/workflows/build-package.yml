@@ -1,4 +1,4 @@
-name: CMake Cloud Build and Package Pipeline
+-name: CMake Cloud Build and Package Pipeline
 
 on:
   push:
