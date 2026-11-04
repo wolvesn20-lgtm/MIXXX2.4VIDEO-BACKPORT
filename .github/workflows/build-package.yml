@@ -684,76 +684,197 @@ jobs:
           print("kept %d loose libraries, removed %d unused" % (len(seen & set(by_name.values())), len(unused)))
           PY
 
-      - name: Finalize bundle using strict 10.13 validation
-        run: |
-          python3 "$SCRIPTS_DIR/finalize_bundle.py" "$MXXX_APP_PATH" \
-            --qt-dir "${{ github.workspace }}/qt/Qt/5.15.2/macos" \
-            --search "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
-            --search "${GITHUB_WORKSPACE}/qtkeychain_install/lib" \
-            --min-macos 10.13
+      - name: Assemble Mixxx.app bundle
+  run: |
+    set -euo pipefail
+    WORKSPACE="${GITHUB_WORKSPACE}"
+    INSTALL_DIR="${WORKSPACE}/build/install"
+    APP="${WORKSPACE}/build/Phoenix.app"
 
-      - name: Explain which files need the too-new libraries
-        if: failure()
-        run: |
-          if [ -z "${MXXX_APP_PATH:-}" ] || [ ! -d "$MXXX_APP_PATH" ]; then exit 0; fi
-          python3 - <<'PY'
-          import os, sys
-          sys.path.insert(0, os.environ["SCRIPTS_DIR"])
-          from finalize_bundle import bundle_machos, target_info
-          app = os.environ["MXXX_APP_PATH"]
-          files = {p: i for p, i in bundle_machos(app)}
-          bad = []
-          for p in files:
-              minos, chained = target_info(p)
-              if (minos and minos > (10, 13)) or chained:
-                  bad.append((p, minos, chained))
-          print("Files built for a newer macOS than 10.13, or using chained fixups:")
-          for p, minos, chained in sorted(bad):
-              base = os.path.basename(p)
-              users = sorted(os.path.relpath(q, app) for q, i in files.items() if q != p and any(os.path.basename(d) == base for _k, d in i["deps"]))
-              needs = [d for _k, d in files[p]["deps"] if not d.startswith(("/usr/lib/", "/System/"))]
-              print("  %s (macOS %s%s)" % (os.path.relpath(p, app), "%d.%d" % minos if minos else "?", ", chained fixups" if chained else ""))
-              print("    used by: " + (", ".join(users) if users else "nothing (safe to remove)"))
-              print("    itself needs: " + (", ".join(needs) if needs else "-"))
-          PY
+    if [ ! -f "${INSTALL_DIR}/bin/mixxx" ]; then
+      echo "ERROR: ${INSTALL_DIR}/bin/mixxx not found."
+      ls -la "${INSTALL_DIR}/bin" || true
+      exit 1
+    fi
 
-      - name: Final symbol check against the macOS 10.13 SDK
-        run: |
-          python3 "$SCRIPTS_DIR/check_sdk_symbols.py" \
-            --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" "$MXXX_APP_PATH"
+    rm -rf "$APP"
+    mkdir -p "${APP}/Contents/MacOS"
+    mkdir -p "${APP}/Contents/Resources"
+    mkdir -p "${APP}/Contents/Frameworks"
 
-      - name: Install create-dmg
-        run: brew install create-dmg
+    cp "${INSTALL_DIR}/bin/mixxx" "${APP}/Contents/MacOS/mixxx"
+    chmod +x "${APP}/Contents/MacOS/mixxx"
 
-      - name: Create DMG
-        run: |
-          set -euo pipefail
-          APP="${MXXX_APP_PATH}"
-          if [ -z "$APP" ] || [ ! -d "$APP" ]; then
-            echo "ERROR: MXXX_APP_PATH not set or invalid: '$APP'"
-            exit 1
-          fi
-          OUT="Mixxx-2.4-VIDEO-BACKPORT-macOS-10.13.dmg"
-          rm -f "$OUT"
-          create-dmg \
-            --volname "Mixxx 2.4" \
-            --window-pos 200 120 \
-            --window-size 600 400 \
-            --icon-size 100 \
-            --app-drop-link 450 185 \
-            "$OUT" \
-            "$APP" || true
-          if [ ! -f "$OUT" ]; then
-            echo "ERROR: DMG was not created."
-            exit 1
-          fi
-          ls -lh "$OUT"
+    if [ -d "${INSTALL_DIR}/share/mixxx" ]; then
+      cp -R "${INSTALL_DIR}/share/mixxx/." "${APP}/Contents/Resources/"
+    fi
 
-      - name: Upload macOS DMG
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: MIXXX2.4-VIDEO-BACKPORT-macos-intel-DMG
-          path: Mixxx-2.4-VIDEO-BACKPORT-macos-10.13.dmg
-          if-no-files-found: error
-          retention-days: 7
+    # --- THE PHOENIX REBRAND (Info.plist) ---
+    cat > "${APP}/Contents/Info.plist" <<'PLIST'
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+      "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>CFBundleName</key><string>Phoenix</string>
+        <key>CFBundleDisplayName</key><string>Phoenix</string>
+        <key>CFBundleIdentifier</key><string>org.nightwolves.Phoenix</string>
+        <key>CFBundleVersion</key><string>2.4.2</string>
+        <key>CFBundleShortVersionString</key><string>2.4.2</string>
+        <key>CFBundleExecutable</key><string>mixxx</string>
+        <key>CFBundlePackageType</key><string>APPL</string>
+        <key>CFBundleSignature</key><string>????</string>
+        <key>LSMinimumSystemVersion</key><string>10.13</string>
+        <key>NSHighResolutionCapable</key><true/>
+        <key>NSMicrophoneUsageDescription</key>
+        <string>Phoenix needs microphone access for recording and broadcasting.</string>
+        <key>CFBundleIconFile</key><string>phoenix.icns</string>
+    </dict>
+    </plist>
+    PLIST
+
+    # --- THE PHOENIX LOGO PACKAGING ---
+    mkdir -p "${APP}/Contents/Resources/skins/Phoenix/images"
+    if [ -f "${WORKSPACE}/source_repo/res/skins/Phoenix/images/phoenix_logo.svg" ]; then
+      cp "${WORKSPACE}/source_repo/res/skins/Phoenix/images/phoenix_logo.svg" "${APP}/Contents/Resources/skins/Phoenix/images/"
+    fi
+    
+    echo "MXXX_APP_PATH=${APP}" >> "$GITHUB_ENV"
+    
+    - name: Bundle Qt frameworks with macdeployqt
+   run: |
+    set -euo pipefail
+    APP="${MXXX_APP_PATH}"
+    DEPS="$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release"
+    
+    MACDEPLOYQT="$(command -v macdeployqt || true)"
+    if [ -z "$MACDEPLOYQT" ]; then
+      MACDEPLOYQT="$(find /usr/local -name macdeployqt -type f 2>/dev/null | head -1)"
+    fi
+    echo "Using macdeployqt: $MACDEPLOYQT"
+    
+    "$MACDEPLOYQT" "$APP" -verbose=2 \
+      -libpath="$DEPS/lib" \
+      -libpath="${{ github.workspace }}/qtkeychain_install/lib" \
+      -libpath=/usr/local/lib \
+      -libpath=/usr/local/opt/qt@5/lib \
+      -libpath="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib" || true
+
+- name: Remove unneeded SQL drivers and the libraries they pulled in
+  run: |
+    set -euo pipefail
+    APP="${MXXX_APP_PATH}"
+    if [ -d "$APP/Contents/PlugIns/sqldrivers" ]; then
+      find "$APP/Contents/PlugIns/sqldrivers" -type f ! -name 'libqsqlite.dylib' -print -delete
+    fi
+    python3 - <<'PY'
+    import os, sys
+    sys.path.insert(0, os.environ["SCRIPTS_DIR"])
+    from finalize_bundle import bundle_machos
+
+    app = os.environ["MXXX_APP_PATH"]
+    fw = os.path.join(app, "Contents", "Frameworks")
+    files = {p: info for p, info in bundle_machos(app)}
+
+    by_name = {}
+    for name in os.listdir(fw):
+        p = os.path.join(fw, name)
+        real = os.path.realpath(p)
+        if real in files and os.path.dirname(real) == os.path.realpath(fw):
+            by_name[name] = real
+
+    roots = [p for p in files if os.path.dirname(p) != os.path.realpath(fw)]
+    seen, queue = set(roots), list(roots)
+    while queue:
+        p = queue.pop()
+        for _kind, dep in files[p]["deps"]:
+            q = by_name.get(os.path.basename(dep))
+            if q and q not in seen:
+                seen.add(q)
+                queue.append(q)
+
+    unused = sorted({real for real in by_name.values() if real not in seen})
+    for real in unused:
+        os.remove(real)
+        print("removed unused library:", os.path.basename(real))
+    for name in os.listdir(fw):
+        p = os.path.join(fw, name)
+        if os.path.islink(p) and not os.path.exists(p):
+            os.remove(p)
+            print("removed dangling link:", name)
+    print("kept %d loose libraries, removed %d unused" % (len(seen & set(by_name.values())), len(unused)))
+    PY
+
+- name: Finalize bundle using strict 10.13 validation
+  run: |
+    python3 "$SCRIPTS_DIR/finalize_bundle.py" "$MXXX_APP_PATH" \
+      --qt-dir "${{ github.workspace }}/qt/Qt/5.15.2/macos" \
+      --search "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
+      --search "${GITHUB_WORKSPACE}/qtkeychain_install/lib" \
+      --min-macos 10.13
+
+- name: Explain which files need the too-new libraries
+  if: failure()
+  run: |
+    if [ -z "${MXXX_APP_PATH:-}" ] || [ ! -d "$MXXX_APP_PATH" ]; then exit 0; fi
+    python3 - <<'PY'
+    import os, sys
+    sys.path.insert(0, os.environ["SCRIPTS_DIR"])
+    from finalize_bundle import bundle_machos, target_info
+    app = os.environ["MXXX_APP_PATH"]
+    files = {p: i for p, i in bundle_machos(app)}
+    bad = []
+    for p in files:
+        minos, chained = target_info(p)
+        if (minos and minos > (10, 13)) or chained:
+            bad.append((p, minos, chained))
+    print("Files built for a newer macOS than 10.13, or using chained fixups:")
+    for p, minos, chained in sorted(bad):
+        base = os.path.basename(p)
+        users = sorted(os.path.relpath(q, app) for q, i in files.items() if q != p and any(os.path.basename(d) == base for _k, d in i["deps"]))
+        needs = [d for _k, d in files[p]["deps"] if not d.startswith(("/usr/lib/", "/System/"))]
+        print("  %s (macOS %s%s)" % (os.path.relpath(p, app), "%d.%d" % minos if minos else "?", ", chained fixups" if chained else ""))
+        print("    used by: " + (", ".join(users) if users else "nothing (safe to remove)"))
+        print("    itself needs: " + (", ".join(needs) if needs else "-"))
+    PY
+
+- name: Final symbol check against the macOS 10.13 SDK
+  run: |
+    python3 "$SCRIPTS_DIR/check_sdk_symbols.py" \
+      --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" "$MXXX_APP_PATH"
+
+- name: Install create-dmg
+  run: brew install create-dmg
+
+- name: Create DMG
+  run: |
+    set -euo pipefail
+    APP="${MXXX_APP_PATH}"
+    if [ -z "$APP" ] || [ ! -d "$APP" ]; then
+      echo "ERROR: MXXX_APP_PATH not set or invalid: '$APP'"
+      exit 1
+    fi
+    OUT="Phoenix-Night-Wolves-macOS-10.13.dmg"
+    rm -f "$OUT"
+    create-dmg \
+      --volname "Phoenix - Night Wolves" \
+      --window-pos 200 120 \
+      --window-size 600 400 \
+      --icon-size 100 \
+      --app-drop-link 450 185 \
+      "$OUT" \
+      "$APP" || true
+    if [ ! -f "$OUT" ]; then
+      echo "ERROR: DMG was not created."
+      exit 1
+    fi
+    ls -lh "$OUT"
+
+- name: Upload macOS DMG
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: Phoenix-Night-Wolves-macOS-Intel-DMG
+    path: Phoenix-Night-Wolves-macOS-10.13.dmg
+    if-no-files-found: error
+    retention-days: 7
