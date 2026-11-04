@@ -3,6 +3,7 @@
 
 #include <QFileInfo>
 #include <QMutexLocker>
+#include <QDebug>
 
 #include <cstring>
 
@@ -13,11 +14,12 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-#include "control/controlproxy.h" // NEW: Needed for the audio clock
+#include "control/controlproxy.h"
 
 namespace {
 
 QImage frameToQImage(const AVFrame* frame, int width, int height) {
+    // Full resolution decoding - no artificial limits
     QImage image(width, height, QImage::Format_RGB32);
 
     SwsContext* sws = sws_getContext(
@@ -40,10 +42,10 @@ QImage frameToQImage(const AVFrame* frame, int width, int height) {
 
 } // namespace
 
-// NEW: Constructor now takes the group and sets up the audio clock proxy
 VideoDecoder::VideoDecoder(const QString& group, QObject* parent)
         : QThread(parent), m_group(group) {
-    m_pAudioClock = new ControlProxy(m_group, "video_audio_clock", this);
+    // Use standard playposition (0.0 to 1.0) as the master clock
+    m_pPlayPosition = new ControlProxy(m_group, "playposition", this);
 }
 
 VideoDecoder::~VideoDecoder() {
@@ -169,6 +171,12 @@ void VideoDecoder::run() {
         return;
     }
 
+    // Setup sync variables
+    int frameIndex = 0; 
+    double fps = av_q2d(formatCtx->streams[videoStreamIndex]->avg_frame_rate);
+    if (fps <= 0 || fps > 120) fps = 30.0; // Fallback if fps is broken
+    double durationMs = formatCtx->duration / 1000.0; // Convert microseconds to ms
+
     bool aborted = false;
 
     while (av_read_frame(formatCtx, packet) >= 0) {
@@ -195,22 +203,31 @@ void VideoDecoder::run() {
         av_packet_unref(packet);
 
         while (avcodec_receive_frame(codecCtx, frame) == 0) {
+            
             // --- THE SYNC ENGINE ---
-            if (m_pAudioClock) {
-                double audioTimeMs = m_pAudioClock->get() * 1000.0;
-                double frameTimeMs = (frame->pts * 1000.0) / av_q2d(formatCtx->streams[videoStreamIndex]->time_base);
+            if (m_pPlayPosition) {
+                double playPos = m_pPlayPosition->get(); // 0.0 to 1.0
+                double audioTimeMs = playPos * durationMs;
                 
-                // If video is ahead of the audio clock, wait for the audio.
+                double frameTimeMs = 0;
+                if (frame->best_effort_timestamp != AV_NOPTS_VALUE) {
+                    // Normal MP4 with working timestamps
+                    frameTimeMs = frame->best_effort_timestamp * av_q2d(formatCtx->streams[videoStreamIndex]->time_base) * 1000.0;
+                } else {
+                    // Fallback for corrupted MP4s
+                    frameTimeMs = (frameIndex * 1000.0) / fps;
+                }
+                frameIndex++;
+
+                // Sync Logic
                 if (frameTimeMs > audioTimeMs + 50) {
-                    QThread::msleep(10);
-                } 
-                // If video is behind the audio clock, drop this frame.
-                else if (frameTimeMs < audioTimeMs - 50) {
-                    av_frame_unref(frame);
+                    QThread::msleep(10); // Video is ahead. Wait for audio.
+                } else if (frameTimeMs < audioTimeMs - 100) {
+                    av_frame_unref(frame); // Video is behind. Drop frame to catch up.
                     continue; 
                 }
             }
-            // -----------------------
+            // -------------------------------
 
             QImage image = frameToQImage(frame, codecCtx->width, codecCtx->height);
             if (!image.isNull()) {
@@ -218,8 +235,7 @@ void VideoDecoder::run() {
             }
             av_frame_unref(frame);
             
-            // Tiny sleep to prevent the CPU from melting down while paused
-            QThread::msleep(1);
+            QThread::msleep(1); 
 
             {
                 QMutexLocker locker(&m_mutex);
