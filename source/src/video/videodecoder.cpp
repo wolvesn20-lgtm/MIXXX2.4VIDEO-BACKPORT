@@ -19,7 +19,6 @@ extern "C" {
 namespace {
 
 QImage frameToQImage(const AVFrame* frame, int width, int height) {
-    // Full resolution decoding - no artificial limits
     QImage image(width, height, QImage::Format_RGB32);
 
     SwsContext* sws = sws_getContext(
@@ -44,7 +43,6 @@ QImage frameToQImage(const AVFrame* frame, int width, int height) {
 
 VideoDecoder::VideoDecoder(const QString& group, QObject* parent)
         : QThread(parent), m_group(group) {
-    // Use standard playposition (0.0 to 1.0) as the master clock
     m_pPlayPosition = new ControlProxy(m_group, "playposition", this);
 }
 
@@ -130,7 +128,6 @@ void VideoDecoder::run() {
     }
 
     AVCodecParameters* codecParams = formatCtx->streams[videoStreamIndex]->codecpar;
-
     const AVCodec* codec = avcodec_find_decoder(codecParams->codec_id);
     if (!codec) {
         emit openFailed(tr("No decoder found for video codec"));
@@ -171,11 +168,10 @@ void VideoDecoder::run() {
         return;
     }
 
-    // Setup sync variables
     int frameIndex = 0; 
     double fps = av_q2d(formatCtx->streams[videoStreamIndex]->avg_frame_rate);
-    if (fps <= 0 || fps > 120) fps = 30.0; // Fallback if fps is broken
-    double durationMs = formatCtx->duration / 1000.0; // Convert microseconds to ms
+    if (fps <= 0 || fps > 120) fps = 30.0; 
+    double durationMs = formatCtx->duration / 1000.0; 
 
     bool aborted = false;
 
@@ -204,30 +200,25 @@ void VideoDecoder::run() {
 
         while (avcodec_receive_frame(codecCtx, frame) == 0) {
             
-            // --- THE SYNC ENGINE ---
             if (m_pPlayPosition) {
-                double playPos = m_pPlayPosition->get(); // 0.0 to 1.0
+                double playPos = m_pPlayPosition->get(); 
                 double audioTimeMs = playPos * durationMs;
                 
                 double frameTimeMs = 0;
                 if (frame->best_effort_timestamp != AV_NOPTS_VALUE) {
-                    // Normal MP4 with working timestamps
                     frameTimeMs = frame->best_effort_timestamp * av_q2d(formatCtx->streams[videoStreamIndex]->time_base) * 1000.0;
                 } else {
-                    // Fallback for corrupted MP4s
                     frameTimeMs = (frameIndex * 1000.0) / fps;
                 }
                 frameIndex++;
 
-                // Sync Logic
                 if (frameTimeMs > audioTimeMs + 50) {
-                    QThread::msleep(10); // Video is ahead. Wait for audio.
+                    QThread::msleep(10); 
                 } else if (frameTimeMs < audioTimeMs - 100) {
-                    av_frame_unref(frame); // Video is behind. Drop frame to catch up.
+                    av_frame_unref(frame); 
                     continue; 
                 }
             }
-            // -------------------------------
 
             QImage image = frameToQImage(frame, codecCtx->width, codecCtx->height);
             if (!image.isNull()) {
