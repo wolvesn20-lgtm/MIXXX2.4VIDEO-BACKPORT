@@ -3,12 +3,11 @@
 #include <QImage>
 #include <QMutex>
 #include <QThread>
-#include "control/controlproxy.h" // <-- NEW: For the audio clock
+#include "control/controlproxy.h"
 
 class VideoDecoder : public QThread {
     Q_OBJECT
 public:
-    // CHANGED: Now accepts the group (e.g., "[Channel1]")
     explicit VideoDecoder(const QString& group, QObject* parent = nullptr); 
     ~VideoDecoder() override;
 
@@ -27,7 +26,6 @@ private:
     QMutex m_mutex;
     bool m_abort{false};
     
-    // NEW: Variables to track the deck and sync clock
     QString m_group;
-    ControlProxy* m_pAudioClock{nullptr};
+    ControlProxy* m_pPlayPosition{nullptr};
 };
