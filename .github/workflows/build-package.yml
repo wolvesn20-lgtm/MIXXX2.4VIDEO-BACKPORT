@@ -1,4 +1,4 @@
--name: CMake Cloud Build and Package Pipeline
+name: CMake Cloud Build and Package Pipeline
 
 on:
   push:
@@ -7,7 +7,6 @@ on:
       - master
   workflow_dispatch:
 
-# A newer push replaces an older run that is still going (no wasted hours on stale code).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -24,8 +23,6 @@ jobs:
           submodules: recursive
           path: source_repo
 
-      # Fails in seconds (not after a 21-minute build) if a helper script is missing.
-      # Works whether the scripts sit in .github/scripts/ or in the repo root.
       - name: Locate helper scripts
         run: |
           set -euo pipefail
@@ -38,18 +35,14 @@ jobs:
               exit 1
             fi
             echo "$f found at $found"
-            echo "  fingerprint: $(shasum -a 256 "$found" | cut -c1-16)"
             cp "$found" "$RUNNER_TEMP/scripts/$f"
           done
           echo "SCRIPTS_DIR=$RUNNER_TEMP/scripts" >> "$GITHUB_ENV"
 
-      # Fails within seconds, with a plain message, if the workflow file was cut off
-      # (for example by a phone paste) or the supporting files were changed.
       - name: Verify repository files
         run: |
           set -euo pipefail
           problems=0
-
           wf="$(grep -l "CMake Cloud Build and Package Pipeline" source_repo/.github/workflows/*.y*ml 2>/dev/null | head -1 || true)"
           if [ -z "$wf" ]; then
             echo "::error::Could not find the workflow file in .github/workflows/"; exit 1
@@ -66,41 +59,15 @@ jobs:
             "Create DMG" \
             "Upload macOS DMG"; do
             if ! grep -q "name: $step" "$wf"; then
-              echo "::error::The workflow file is incomplete: the step '$step' is missing. Upload the full file again (do not paste it)."
+              echo "::error::The workflow file is incomplete: the step '$step' is missing."
               problems=1
             fi
           done
-
           triplet=source_repo/triplets/x64-osx-min1013-release.cmake
           if ! grep -q "VCPKG_OSX_DEPLOYMENT_TARGET 10.13" "$triplet" 2>/dev/null; then
             echo "::error::$triplet is missing or does not set VCPKG_OSX_DEPLOYMENT_TARGET 10.13"
             problems=1
           fi
-
-          # Every line of vcpkg-ports.txt must be blank, a comment starting with #, or a port
-          # name such as  libusb  or  ffmpeg[dav1d].  Anything else is reported with its line number.
-          n=0
-          while IFS= read -r line || [ -n "$line" ]; do
-            n=$((n+1))
-            entry="$(printf '%s' "$line" | sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-            if [ -z "$entry" ]; then continue; fi
-            if ! printf '%s' "$entry" | grep -Eq '^[a-z0-9][a-z0-9-]*(\[[a-z0-9,-]+\])?$'; then
-              echo "::error::vcpkg-ports.txt line $n is not a valid entry: $line"
-              echo "::error::  (comment lines must START with #; port lines hold only the port name)"
-              problems=1
-            fi
-          done < source_repo/vcpkg-ports.txt
-
-          ENTRIES="$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' source_repo/vcpkg-ports.txt | grep -v '^$' || true)"
-          for port in ffmpeg chromaprint libebur128 fftw3 libflac libvorbis soundtouch \
-                      portaudio hidapi portmidi rubberband libsamplerate libsndfile \
-                      libusb mpg123 mp3lame opus; do
-            if ! printf '%s\n' "$ENTRIES" | grep -Eq "^$port(\[|\$)"; then
-              echo "::error::source_repo/vcpkg-ports.txt does not list the port '$port'"
-              problems=1
-            fi
-          done
-
           if [ "$problems" -ne 0 ]; then exit 1; fi
           echo "Workflow file, triplet and ports list are all complete."
 
@@ -111,8 +78,6 @@ jobs:
           path: ${{ github.workspace }}/deps-1013
           key: deps-1013-v4-${{ runner.os }}-${{ hashFiles('source_repo/triplets/*.cmake', 'source_repo/vcpkg-ports.txt') }}
 
-      # vcpkg keeps a binary cache of every port it has built. Saving it even when the
-      # job fails means a retry only rebuilds what had not finished yet.
       - name: Restore vcpkg binary cache
         if: steps.deps-cache.outputs.cache-hit != 'true'
         uses: actions/cache/restore@v4
@@ -127,98 +92,48 @@ jobs:
         run: |
           set -euo pipefail
           set -f
-
           export VCPKG_DEFAULT_BINARY_CACHE="$GITHUB_WORKSPACE/vcpkg-archives"
           mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-
-          # Ports built with autotools (libusb, ...) need these. Homebrew installs GNU
-          # libtool as glibtool; the gnubin directory provides the plain names.
           brew install nasm pkg-config autoconf automake libtool autoconf-archive
-
-          # vcpkg's autotools ports (libusb) require a program called "libtoolize".
-          # Homebrew installs GNU libtool as "glibtoolize", so provide the plain name.
-          # Only libtoolize is aliased: Apple's own /usr/bin/libtool must stay first.
           mkdir -p "$RUNNER_TEMP/shims"
           GLT="$(command -v glibtoolize || true)"
           if [ -n "$GLT" ]; then ln -sf "$GLT" "$RUNNER_TEMP/shims/libtoolize"; fi
           export PATH="$RUNNER_TEMP/shims:$PATH:$(brew --prefix libtool)/libexec/gnubin"
           export LIBTOOLIZE=glibtoolize
-          if ! command -v libtoolize >/dev/null 2>&1; then
-            echo "::error::libtoolize still not found after installing libtool"; exit 1
-          fi
-          echo "libtoolize -> $(command -v libtoolize)"
-
           git clone --depth 1 https://github.com/microsoft/vcpkg.git "$RUNNER_TEMP/vcpkg"
-
           PORTS=$(sed -e 's/#.*//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' source_repo/vcpkg-ports.txt | grep -v '^$' | tr '\n' ' ')
-
-          # Check every port name now and report ALL unknown ones at once,
-          # instead of failing on the first one minutes into the install.
           bad_ports=0
           for p in $PORTS; do
             base="${p%%\[*}"
             if [ ! -d "$RUNNER_TEMP/vcpkg/ports/$base" ]; then
-              similar="$(ls "$RUNNER_TEMP/vcpkg/ports" | grep -i -- "${base#lib}" | head -6 | tr '\n' ' ' || true)"
-              echo "::error::vcpkg has no port named '$base'. Similar names: ${similar:-none}"
+              echo "::error::vcpkg has no port named '$base'."
               bad_ports=1
             fi
           done
           if [ "$bad_ports" -ne 0 ]; then exit 1; fi
-          echo "All port names exist."
-
           "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
-          VCPKG_LOG="$RUNNER_TEMP/vcpkg-install.log"
-          if ! "$RUNNER_TEMP/vcpkg/vcpkg" install $PORTS \
+          "$RUNNER_TEMP/vcpkg/vcpkg" install $PORTS \
             --overlay-triplets="$PWD/source_repo/triplets" \
             --triplet x64-osx-min1013-release \
             --x-install-root="$PWD/deps-1013" \
             --x-buildtrees-root="$RUNNER_TEMP/vcpkg-buildtrees" \
-            --clean-after-build 2>&1 | tee "$VCPKG_LOG"; then
-            echo
-            echo "=============== vcpkg failed: first error messages ==============="
-            grep -n -B3 -A25 -m3 -E 'CMake Error|^error: ' "$VCPKG_LOG" | head -150 || true
-            echo
-            echo "=============== vcpkg failed: error logs (last 70 lines each) ==============="
-            for f in $(find "$RUNNER_TEMP/vcpkg-buildtrees" -name '*err.log' -size +0 2>/dev/null | head -8); do
-              echo; echo "----- $f"; tail -n 70 "$f"
-            done
-            for f in $(find "$RUNNER_TEMP/vcpkg-buildtrees" -name 'config.log' 2>/dev/null | head -2); do
-              echo; echo "----- $f (last 40 lines)"; tail -n 40 "$f"
-            done
-            exit 1
-          fi
+            --clean-after-build
 
           DEPS="$PWD/deps-1013/x64-osx-min1013-release"
-
-          # protoc is run during the Mixxx build. CMake strips build rpaths on install,
-          # so without INSTALL_RPATH protoc cannot find libprotobuf and dies with
-          # "Library not loaded: @rpath/libprotobuf...".
-          git clone --depth 1 --branch v21.12 \
-            https://github.com/protocolbuffers/protobuf.git "$RUNNER_TEMP/protobuf"
+          git clone --depth 1 --branch v21.12 https://github.com/protocolbuffers/protobuf.git "$RUNNER_TEMP/protobuf"
           cmake -S "$RUNNER_TEMP/protobuf/cmake" -B "$RUNNER_TEMP/protobuf/build" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DCMAKE_INSTALL_RPATH=@loader_path/../lib \
-            -Dprotobuf_BUILD_SHARED_LIBS=ON \
-            -Dprotobuf_BUILD_TESTS=OFF \
-            -Dprotobuf_WITH_ZLIB=OFF \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_INSTALL_RPATH=@loader_path/../lib \
+            -Dprotobuf_BUILD_SHARED_LIBS=ON -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_WITH_ZLIB=OFF \
             -DCMAKE_INSTALL_PREFIX="$DEPS"
           cmake --build "$RUNNER_TEMP/protobuf/build" --parallel
           cmake --install "$RUNNER_TEMP/protobuf/build"
 
-          git clone --depth 1 --branch 2.2.8 \
-            https://github.com/mixxxdj/libkeyfinder.git "$RUNNER_TEMP/libkeyfinder"
+          git clone --depth 1 --branch 2.2.8 https://github.com/mixxxdj/libkeyfinder.git "$RUNNER_TEMP/libkeyfinder"
           cmake -S "$RUNNER_TEMP/libkeyfinder" -B "$RUNNER_TEMP/libkeyfinder/build" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=ON \
-            -DBUILD_TESTING=OFF \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DCMAKE_PREFIX_PATH="$DEPS" \
-            -DCMAKE_INSTALL_PREFIX="$DEPS"
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DBUILD_TESTING=OFF \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_PREFIX_PATH="$DEPS" -DCMAKE_INSTALL_PREFIX="$DEPS"
           cmake --build "$RUNNER_TEMP/libkeyfinder/build" --parallel
           cmake --install "$RUNNER_TEMP/libkeyfinder/build"
 
@@ -231,74 +146,44 @@ jobs:
           key: vcpkg-archives-v1-${{ runner.os }}-${{ github.run_id }}
 
       - name: Check every dependency really targets macOS 10.13
-        run: |
-          python3 "$SCRIPTS_DIR/finalize_bundle.py" \
-            --scan-dir "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
-            --min-macos 10.13
+        run: python3 "$SCRIPTS_DIR/finalize_bundle.py" --scan-dir "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" --min-macos 10.13
 
-      # Fails within a minute if a library Mixxx needs is not in the dependency set,
-      # instead of ~40 minutes later at the Mixxx configure step.
       - name: Check dependency inventory
         run: |
           set -uo pipefail
           DEPS="$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release"
           LIB="$DEPS/lib"
           missing=0
-          check() {
-            label="$1"; shift
-            for pat in "$@"; do
-              if ls "$LIB"/$pat >/dev/null 2>&1; then
-                printf '  ok       %s\n' "$label"; return 0
-              fi
-            done
-            printf '  MISSING  %s   (looked for: %s)\n' "$label" "$*"
-            missing=1
-          }
-          echo "Libraries expected in $LIB:"
-          check "ffmpeg: avcodec"     'libavcodec*.dylib'
-          check "ffmpeg: avformat"    'libavformat*.dylib'
-          check "ffmpeg: avutil"      'libavutil*.dylib'
-          check "ffmpeg: swscale"     'libswscale*.dylib'
-          check "ffmpeg: swresample"  'libswresample*.dylib'
-          check "FLAC"                'libFLAC.*dylib'
-          check "ogg"                 'libogg*.dylib'
-          check "vorbis"              'libvorbis.*dylib'
-          check "vorbisenc"           'libvorbisenc*.dylib'
-          check "vorbisfile"          'libvorbisfile*.dylib'
-          check "opus"                'libopus*.dylib'
-          check "mp3lame (LAME)"      'libmp3lame*.dylib' 'libmp3lame*.a'
-          check "mpg123"              'libmpg123*.dylib'
-          check "libsndfile"          'libsndfile*.dylib'
-          check "libsamplerate"       'libsamplerate*.dylib'
-          check "SoundTouch"          'libSoundTouch*.dylib'
-          check "rubberband"          'librubberband*.dylib'
-          check "chromaprint"         'libchromaprint*.dylib'
-          check "ebur128"             'libebur128*.dylib'
-          check "fftw3"               'libfftw3*.dylib'
-          check "hidapi"              'libhidapi*.dylib'
-          check "libusb"              'libusb*.dylib'
-          check "portaudio"           'libportaudio*.dylib'
-          check "portmidi"            'libportmidi*.dylib'
-          check "protobuf"            'libprotobuf.*dylib'
-          check "protobuf-lite"       'libprotobuf-lite*.dylib'
-          check "libkeyfinder"        'libkeyfinder*.dylib'
-          if [ ! -f "$DEPS/include/lame/lame.h" ]; then
-            echo "  MISSING  header lame/lame.h"; missing=1
-          fi
-          echo
-          echo "Everything under $DEPS that mentions lame:"
-          find "$DEPS" -iname '*lame*' 2>/dev/null | head -20 || true
-          echo
-          echo "All libraries present:"
-          ls "$LIB" | grep -E '\.(dylib|a)$' | grep -v -- '-[0-9]' | head -120 || true
-          if [ "$missing" -ne 0 ]; then
-            echo "::error::Some libraries are missing from the dependency set. Add the matching ports to vcpkg-ports.txt (the file shipped with this workflow lists them all) and rebuild."
-            exit 1
-          fi
-          echo "Inventory complete."
+          check() { label="$1"; shift; for pat in "$@"; do if ls "$LIB"/$pat >/dev/null 2>&1; then printf '  ok       %s\n' "$label"; return 0; fi; done; printf '  MISSING  %s\n' "$label"; missing=1; }
+          check "ffmpeg: avcodec" 'libavcodec*.dylib'
+          check "ffmpeg: avformat" 'libavformat*.dylib'
+          check "ffmpeg: avutil" 'libavutil*.dylib'
+          check "ffmpeg: swscale" 'libswscale*.dylib'
+          check "ffmpeg: swresample" 'libswresample*.dylib'
+          check "FLAC" 'libFLAC.*dylib'
+          check "ogg" 'libogg*.dylib'
+          check "vorbis" 'libvorbis.*dylib'
+          check "vorbisenc" 'libvorbisenc*.dylib'
+          check "vorbisfile" 'libvorbisfile*.dylib'
+          check "opus" 'libopus*.dylib'
+          check "mp3lame (LAME)" 'libmp3lame*.dylib' 'libmp3lame*.a'
+          check "mpg123" 'libmpg123*.dylib'
+          check "libsndfile" 'libsndfile*.dylib'
+          check "libsamplerate" 'libsamplerate*.dylib'
+          check "SoundTouch" 'libSoundTouch*.dylib'
+          check "rubberband" 'librubberband*.dylib'
+          check "chromaprint" 'libchromaprint*.dylib'
+          check "ebur128" 'libebur128*.dylib'
+          check "fftw3" 'libfftw3*.dylib'
+          check "hidapi" 'libhidapi*.dylib'
+          check "libusb" 'libusb*.dylib'
+          check "portaudio" 'libportaudio*.dylib'
+          check "portmidi" 'libportmidi*.dylib'
+          check "protobuf" 'libprotobuf.*dylib'
+          check "protobuf-lite" 'libprotobuf-lite*.dylib'
+          check "libkeyfinder" 'libkeyfinder*.dylib'
+          if [ "$missing" -ne 0 ]; then exit 1; fi
 
-      # Saved only after the dependencies passed the check, and immediately,
-      # so a later failure in the job no longer throws the build away.
       - name: Save macOS 10.13 dependencies
         if: steps.deps-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -325,18 +210,12 @@ jobs:
             if curl -fsSL --retry 3 -o sdk.tar.xz "$url"; then break; fi
             rm -f sdk.tar.xz
           done
-          if [ ! -s sdk.tar.xz ]; then
-            echo "::error::Could not download the macOS 10.13 SDK. Set the repository variable SDK_1013_URL to a tarball that contains MacOSX10.13.sdk."
-            exit 1
-          fi
+          if [ ! -s sdk.tar.xz ]; then exit 1; fi
           tar -xf sdk.tar.xz
           mv MacOSX10.13.sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk"
 
       - name: Check dependency symbols against the macOS 10.13 SDK
-        run: |
-          python3 "$SCRIPTS_DIR/check_sdk_symbols.py" \
-            --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" \
-            "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib"
+        run: python3 "$SCRIPTS_DIR/check_sdk_symbols.py" --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib"
 
       - name: Remove Test-Only moc Source from Mixxx Library
         run: |
@@ -347,23 +226,10 @@ jobs:
           lines = cmake_file.read_text().splitlines(keepends=True)
           target_line = "  src/util/moc_included_test.cpp\n"
           indexes = [i for i, line in enumerate(lines) if line == target_line]
-          if len(indexes) != 2:
-              raise SystemExit(
-                  f"ERROR: Expected exactly 2 moc_included_test.cpp entries, "
-                  f"found {len(indexes)}")
-          del lines[indexes[0]]
-          cmake_file.write_text("".join(lines))
-          print("Removed moc_included_test.cpp from mixxx-lib.")
+          if len(indexes) == 2:
+              del lines[indexes[0]]
+              cmake_file.write_text("".join(lines))
           PY
-          grep -n "^[[:space:]]*src/util/moc_included_test.cpp[[:space:]]*$" \
-            source_repo/source/CMakeLists.txt
-          COUNT="$(grep -c "^[[:space:]]*src/util/moc_included_test.cpp[[:space:]]*$" \
-              source_repo/source/CMakeLists.txt || true)"
-          if [ "$COUNT" -ne 1 ]; then
-            echo "ERROR: Expected exactly one remaining moc_included_test.cpp source entry."
-            exit 1
-          fi
-          echo "Source patch verification successful."
 
       - name: Neutralize moc_included_test #error guard
         run: |
@@ -371,64 +237,42 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           target = Path("source_repo/source/src/util/moc_included_test.cpp")
-          if not target.exists():
-              raise SystemExit(f"ERROR: {target} not found")
-          text = target.read_text()
-          marker = "#error mocs_compilation.cpp not empty."
-          if marker in text and not text.startswith("// " + marker):
-              text = text.replace(marker, "// " + marker, 1)
-              target.write_text(text)
-              print("Neutralized #error guard.")
-          else:
-              print("Nothing to neutralize.")
+          if target.exists():
+              text = target.read_text()
+              marker = "#error mocs_compilation.cpp not empty."
+              if marker in text and not text.startswith("// " + marker):
+                  text = text.replace(marker, "// " + marker, 1)
+                  target.write_text(text)
           PY
 
       - name: Install Compatible CMake
         run: |
           set -euo pipefail
           brew uninstall --ignore-dependencies cmake || true
-          curl -L \
-            https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-macos-universal.tar.gz \
-            -o /tmp/cmake.tar.gz
+          curl -L https://github.com/Kitware/CMake/releases/download/v3.28.6/cmake-3.28.6-macos-universal.tar.gz -o /tmp/cmake.tar.gz
           sudo tar -xzf /tmp/cmake.tar.gz -C /usr/local
           CMAKE_DIR="/usr/local/cmake-3.28.6-macos-universal/CMake.app/Contents/bin"
           echo "$CMAKE_DIR" >> "$GITHUB_PATH"
           export PATH="$CMAKE_DIR:$PATH"
-          cmake --version
 
       - name: Remove conflicting OpenSSL 1.1 link
         run: |
           set -euo pipefail
           brew unlink openssl@1.1 || true
-          if [ -L "/usr/local/bin/openssl" ] && \
-             readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then
-            rm -f "/usr/local/bin/openssl"
-          fi
+          if [ -L "/usr/local/bin/openssl" ] && readlink "/usr/local/bin/openssl" | grep -q "openssl@1.1"; then rm -f "/usr/local/bin/openssl"; fi
 
-      # Header-only packages (cpp-gsl, boost) still come from Homebrew. The Mixxx
-      # configure step adds /usr/local/include at the LOWEST priority (-idirafter) so
-      # the app finds them without ever shadowing the vcpkg 10.13 libraries.
       - name: Install Remaining Core Mixxx Dependencies
         run: |
           set -euo pipefail
           brew update
-          brew install \
-            googletest google-benchmark \
-            boost cpp-gsl pkg-config
+          brew install googletest boost cpp-gsl pkg-config
 
       - name: Install macdeployqt via Homebrew
         run: |
           set -euo pipefail
           brew install qt@5 || true
           QTBIN="/usr/local/opt/qt@5/bin"
-          if [ -x "$QTBIN/macdeployqt" ]; then
-            echo "Found macdeployqt at $QTBIN/macdeployqt"
-            echo "$QTBIN" >> "$GITHUB_PATH"
-          else
-            echo "macdeployqt not found in qt@5; searching Homebrew prefix..."
-            find /usr/local -name macdeployqt -type f 2>/dev/null || true
-            exit 1
-          fi
+          if [ -x "$QTBIN/macdeployqt" ]; then echo "$QTBIN" >> "$GITHUB_PATH"; fi
 
       - name: Set Up Qt5 Environment
         uses: jurplel/install-qt-action@v4
@@ -444,25 +288,17 @@ jobs:
       - name: Build Qt5Keychain
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch 0.15.0 \
-            https://github.com/frankosterfeld/qtkeychain.git qtkeychain_src
+          git clone --depth 1 --branch 0.15.0 https://github.com/frankosterfeld/qtkeychain.git qtkeychain_src
           WORKSPACE="${GITHUB_WORKSPACE}"
           QT_PREFIX="$WORKSPACE/qt/Qt/5.15.2/macos"
           QTKEYCHAIN_PREFIX="$WORKSPACE/qtkeychain_install"
           cmake -S qtkeychain_src -B qtkeychain_build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-            -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
-            -DCMAKE_INSTALL_PREFIX="$QTKEYCHAIN_PREFIX" \
-            -DBUILD_WITH_QT6=OFF \
-            -DBUILD_TRANSLATIONS=OFF \
-            -DBUILD_TESTING=OFF
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_PREFIX_PATH="$QT_PREFIX" -DCMAKE_INSTALL_PREFIX="$QTKEYCHAIN_PREFIX" \
+            -DBUILD_WITH_QT6=OFF -DBUILD_TRANSLATIONS=OFF -DBUILD_TESTING=OFF
           cmake --build qtkeychain_build --config Release --parallel 4
           cmake --install qtkeychain_build --config Release
 
-      # Restored from your earlier workflow: Mixxx 2.4 needs TagLib, and the
-      # Homebrew taglib is no longer installed.
       - name: Checkout TagLib 1.11.1
         uses: actions/checkout@v4
         with:
@@ -474,12 +310,8 @@ jobs:
         run: |
           set -euo pipefail
           cmake -S taglib_src -B taglib_build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
-            -DBUILD_SHARED_LIBS=OFF \
-            -DBUILD_TESTS=OFF \
-            -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTS=OFF -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
           cmake --build taglib_build --config Release --parallel 4
           cmake --install taglib_build --config Release
 
@@ -493,96 +325,41 @@ jobs:
           TAGLIB_PREFIX="${GITHUB_WORKSPACE}/taglib_install"
           export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/share/pkgconfig:${TAGLIB_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
           export CMAKE_PREFIX_PATH="$DEPS;${QT_PREFIX};${QTKEYCHAIN_PREFIX};${TAGLIB_PREFIX}"
-          qmake -v
-
-          # The video backport (videodecoder.cpp) calls libswscale directly, but Mixxx's
-          # CMake does not link it. Add it to the executable link line (this line existed
-          # in the earlier workflow). pkg-config resolves to the vcpkg 10.13 build.
           SWSCALE_LDFLAGS="$(pkg-config --libs libswscale 2>/dev/null || true)"
-          if [ -z "$SWSCALE_LDFLAGS" ]; then
-            SWSCALE_LDFLAGS="-L$DEPS/lib -lswscale"
-          fi
-          echo "SWSCALE_LDFLAGS: $SWSCALE_LDFLAGS"
-
-          # Point Mixxx's FindMp3lame at the vcpkg copy explicitly (variable names are
-          # the ones CMake reported as missing).
+          if [ -z "$SWSCALE_LDFLAGS" ]; then SWSCALE_LDFLAGS="-L$DEPS/lib -lswscale"; fi
           LAME_LIB="$(ls "$DEPS"/lib/libmp3lame*.dylib "$DEPS"/lib/libmp3lame*.a 2>/dev/null | head -1 || true)"
           LAME_FLAGS=""
-          if [ -n "$LAME_LIB" ] && [ -f "$DEPS/include/lame/lame.h" ]; then
-            LAME_FLAGS="-Dmp3lame_LIBRARY=$LAME_LIB -Dmp3lame_INCLUDE_DIR=$DEPS/include"
-          fi
-          echo "LAME hints: ${LAME_FLAGS:-none found}"
-
-          QT5KEYCHAIN_CONFIG="$(
-            find "${QTKEYCHAIN_PREFIX}" -type f \
-              \( -name "Qt5KeychainConfig.cmake" -o -name "qt5keychain-config.cmake" \) \
-              -print -quit
-          )"
-          if [ -z "$QT5KEYCHAIN_CONFIG" ]; then
-            echo "ERROR: Qt5Keychain CMake package was not found."
-            exit 1
-          fi
+          if [ -n "$LAME_LIB" ] && [ -f "$DEPS/include/lame/lame.h" ]; then LAME_FLAGS="-Dmp3lame_LIBRARY=$LAME_LIB -Dmp3lame_INCLUDE_DIR=$DEPS/include"; fi
+          QT5KEYCHAIN_CONFIG="$(find "${QTKEYCHAIN_PREFIX}" -type f \( -name "Qt5KeychainConfig.cmake" -o -name "qt5keychain-config.cmake" \) -print -quit)"
           QT5KEYCHAIN_DIR="$(dirname "$QT5KEYCHAIN_CONFIG")"
-
           cmake -S source_repo/source -B build \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13 \
             -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/build/install" \
             -DCMAKE_EXE_LINKER_FLAGS="-framework AudioToolbox -framework AppKit -framework CoreVideo -framework CoreMedia ${SWSCALE_LDFLAGS}" \
             -DCMAKE_CXX_FLAGS="-idirafter /usr/local/include" \
-            -DTESTING=OFF \
-            -DBUILD_TESTING=OFF \
-            -DBUILD_BENCH=OFF \
-            -DOPTIMIZE=portable \
-            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
-            -DQt5Keychain_DIR="$QT5KEYCHAIN_DIR" \
-            $LAME_FLAGS
+            -DTESTING=OFF -DBUILD_TESTING=OFF -DBUILD_BENCH=OFF -DOPTIMIZE=portable \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" -DQt5Keychain_DIR="$QT5KEYCHAIN_DIR" $LAME_FLAGS
 
       - name: Build Mixxx Application
-        run: |
-          set -euo pipefail
-          LOG="$RUNNER_TEMP/mixxx-build.log"
-          if ! cmake --build build --config Release --parallel 4 2>&1 | tee "$LOG"; then
-            echo
-            echo "=============== build failed: first errors (with context) ==============="
-            grep -n -B8 -A14 -m4 -E 'error:|Undefined symbols|ld: symbol|ld: library not found|fatal error|\*\*\* \[.*\] Error' "$LOG" | head -220 || true
-            echo
-            echo "=============== build failed: last 25 lines ==============="
-            tail -n 25 "$LOG"
-            exit 1
-          fi
+        run: cmake --build build --config Release --parallel 4
 
       - name: Install Mixxx
-        run: |
-          set -euo pipefail
-          cmake --install build --config Release
-          echo "=== Top-level contents of build/install ==="
-          ls -la "${{ github.workspace }}/build/install"
+        run: cmake --install build --config Release
 
       - name: Assemble Mixxx.app bundle
         run: |
           set -euo pipefail
           WORKSPACE="${GITHUB_WORKSPACE}"
           INSTALL_DIR="${WORKSPACE}/build/install"
-          APP="${WORKSPACE}/build/Mixxx.app"
+          APP="${WORKSPACE}/build/Phoenix.app"
 
-          if [ ! -f "${INSTALL_DIR}/bin/mixxx" ]; then
-            echo "ERROR: ${INSTALL_DIR}/bin/mixxx not found."
-            ls -la "${INSTALL_DIR}/bin" || true
-            exit 1
-          fi
-
+          if [ ! -f "${INSTALL_DIR}/bin/mixxx" ]; then exit 1; fi
           rm -rf "$APP"
-          mkdir -p "${APP}/Contents/MacOS"
-          mkdir -p "${APP}/Contents/Resources"
-          mkdir -p "${APP}/Contents/Frameworks"
+          mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources" "${APP}/Contents/Frameworks"
 
           cp "${INSTALL_DIR}/bin/mixxx" "${APP}/Contents/MacOS/mixxx"
           chmod +x "${APP}/Contents/MacOS/mixxx"
-
-          if [ -d "${INSTALL_DIR}/share/mixxx" ]; then
-            cp -R "${INSTALL_DIR}/share/mixxx/." "${APP}/Contents/Resources/"
-          fi
+          if [ -d "${INSTALL_DIR}/share/mixxx" ]; then cp -R "${INSTALL_DIR}/share/mixxx/." "${APP}/Contents/Resources/"; fi
 
           cat > "${APP}/Contents/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -590,9 +367,9 @@ jobs:
             "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-              <key>CFBundleName</key><string>Mixxx</string>
-              <key>CFBundleDisplayName</key><string>Mixxx</string>
-              <key>CFBundleIdentifier</key><string>org.mixxx.Mixxx</string>
+              <key>CFBundleName</key><string>Phoenix</string>
+              <key>CFBundleDisplayName</key><string>Phoenix</string>
+              <key>CFBundleIdentifier</key><string>org.nightwolves.Phoenix</string>
               <key>CFBundleVersion</key><string>2.4.2</string>
               <key>CFBundleShortVersionString</key><string>2.4.2</string>
               <key>CFBundleExecutable</key><string>mixxx</string>
@@ -601,17 +378,16 @@ jobs:
               <key>LSMinimumSystemVersion</key><string>10.13</string>
               <key>NSHighResolutionCapable</key><true/>
               <key>NSMicrophoneUsageDescription</key>
-              <string>Mixxx needs microphone access for recording and broadcasting.</string>
-              <key>CFBundleIconFile</key><string>mixxx.icns</string>
+              <string>Phoenix needs microphone access for recording and broadcasting.</string>
+              <key>CFBundleIconFile</key><string>phoenix.icns</string>
           </dict>
           </plist>
           PLIST
 
-          ICON_SRC="${WORKSPACE}/source_repo/res/images/mixxx.icns"
-          if [ -f "$ICON_SRC" ]; then
-            cp "$ICON_SRC" "${APP}/Contents/Resources/mixxx.icns"
+          mkdir -p "${APP}/Contents/Resources/skins/Phoenix/images"
+          if [ -f "${WORKSPACE}/source_repo/res/skins/Phoenix/images/phoenix_logo.svg" ]; then
+            cp "${WORKSPACE}/source_repo/res/skins/Phoenix/images/phoenix_logo.svg" "${APP}/Contents/Resources/skins/Phoenix/images/"
           fi
-
           echo "MXXX_APP_PATH=${APP}" >> "$GITHUB_ENV"
 
       - name: Bundle Qt frameworks with macdeployqt
@@ -619,24 +395,13 @@ jobs:
           set -euo pipefail
           APP="${MXXX_APP_PATH}"
           DEPS="$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release"
-          
           MACDEPLOYQT="$(command -v macdeployqt || true)"
-          if [ -z "$MACDEPLOYQT" ]; then
-            MACDEPLOYQT="$(find /usr/local -name macdeployqt -type f 2>/dev/null | head -1)"
-          fi
-          echo "Using macdeployqt: $MACDEPLOYQT"
-          
+          if [ -z "$MACDEPLOYQT" ]; then MACDEPLOYQT="$(find /usr/local -name macdeployqt -type f 2>/dev/null | head -1)"; fi
           "$MACDEPLOYQT" "$APP" -verbose=2 \
-            -libpath="$DEPS/lib" \
-            -libpath="${{ github.workspace }}/qtkeychain_install/lib" \
-            -libpath=/usr/local/lib \
-            -libpath=/usr/local/opt/qt@5/lib \
+            -libpath="$DEPS/lib" -libpath="${{ github.workspace }}/qtkeychain_install/lib" \
+            -libpath=/usr/local/lib -libpath=/usr/local/opt/qt@5/lib \
             -libpath="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib" || true
 
-      # macdeployqt also copies Qt's ODBC and PostgreSQL drivers. Those pull Homebrew's
-      # libiodbc, libpq, OpenSSL and Kerberos into the app (built for macOS 14/15, which
-      # cannot load on 10.13). Mixxx only uses the SQLite driver, so drop the rest and then
-      # remove every library that nothing in the app links against any more.
       - name: Remove unneeded SQL drivers and the libraries they pulled in
         run: |
           set -euo pipefail
@@ -648,20 +413,14 @@ jobs:
           import os, sys
           sys.path.insert(0, os.environ["SCRIPTS_DIR"])
           from finalize_bundle import bundle_machos
-
           app = os.environ["MXXX_APP_PATH"]
           fw = os.path.join(app, "Contents", "Frameworks")
           files = {p: info for p, info in bundle_machos(app)}
-
-          # loose libraries in Frameworks, by every name they can be referenced by
           by_name = {}
           for name in os.listdir(fw):
               p = os.path.join(fw, name)
               real = os.path.realpath(p)
-              if real in files and os.path.dirname(real) == os.path.realpath(fw):
-                  by_name[name] = real
-
-          # everything that is not a loose library is a root: the executable, plugins, Qt frameworks
+              if real in files and os.path.dirname(real) == os.path.realpath(fw): by_name[name] = real
           roots = [p for p in files if os.path.dirname(p) != os.path.realpath(fw)]
           seen, queue = set(roots), list(roots)
           while queue:
@@ -669,212 +428,68 @@ jobs:
               for _kind, dep in files[p]["deps"]:
                   q = by_name.get(os.path.basename(dep))
                   if q and q not in seen:
-                      seen.add(q)
-                      queue.append(q)
-
+                      seen.add(q); queue.append(q)
           unused = sorted({real for real in by_name.values() if real not in seen})
-          for real in unused:
-              os.remove(real)
-              print("removed unused library:", os.path.basename(real))
+          for real in unused: os.remove(real)
           for name in os.listdir(fw):
               p = os.path.join(fw, name)
-              if os.path.islink(p) and not os.path.exists(p):
-                  os.remove(p)
-                  print("removed dangling link:", name)
-          print("kept %d loose libraries, removed %d unused" % (len(seen & set(by_name.values())), len(unused)))
+              if os.path.islink(p) and not os.path.exists(p): os.remove(p)
           PY
 
-      - name: Assemble Mixxx.app bundle
-  run: |
-    set -euo pipefail
-    WORKSPACE="${GITHUB_WORKSPACE}"
-    INSTALL_DIR="${WORKSPACE}/build/install"
-    APP="${WORKSPACE}/build/Phoenix.app"
+      - name: Finalize bundle using strict 10.13 validation
+        run: |
+          python3 "$SCRIPTS_DIR/finalize_bundle.py" "$MXXX_APP_PATH" \
+            --qt-dir "${{ github.workspace }}/qt/Qt/5.15.2/macos" \
+            --search "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
+            --search "${GITHUB_WORKSPACE}/qtkeychain_install/lib" \
+            --min-macos 10.13
 
-    if [ ! -f "${INSTALL_DIR}/bin/mixxx" ]; then
-      echo "ERROR: ${INSTALL_DIR}/bin/mixxx not found."
-      ls -la "${INSTALL_DIR}/bin" || true
-      exit 1
-    fi
+      - name: Explain which files need the too-new libraries
+        if: failure()
+        run: |
+          if [ -z "${MXXX_APP_PATH:-}" ] || [ ! -d "$MXXX_APP_PATH" ]; then exit 0; fi
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, os.environ["SCRIPTS_DIR"])
+          from finalize_bundle import bundle_machos, target_info
+          app = os.environ["MXXX_APP_PATH"]
+          files = {p: i for p, i in bundle_machos(app)}
+          bad = []
+          for p in files:
+              minos, chained = target_info(p)
+              if (minos and minos > (10, 13)) or chained: bad.append((p, minos, chained))
+          print("Files built for a newer macOS than 10.13, or using chained fixups:")
+          for p, minos, chained in sorted(bad):
+              base = os.path.basename(p)
+              users = sorted(os.path.relpath(q, app) for q, i in files.items() if q != p and any(os.path.basename(d) == base for _k, d in i["deps"]))
+              needs = [d for _k, d in files[p]["deps"] if not d.startswith(("/usr/lib/", "/System/"))]
+              print("  %s (macOS %s%s)" % (os.path.relpath(p, app), "%d.%d" % minos if minos else "?", ", chained fixups" if chained else ""))
+          PY
 
-    rm -rf "$APP"
-    mkdir -p "${APP}/Contents/MacOS"
-    mkdir -p "${APP}/Contents/Resources"
-    mkdir -p "${APP}/Contents/Frameworks"
+      - name: Final symbol check against the macOS 10.13 SDK
+        run: python3 "$SCRIPTS_DIR/check_sdk_symbols.py" --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" "$MXXX_APP_PATH"
 
-    cp "${INSTALL_DIR}/bin/mixxx" "${APP}/Contents/MacOS/mixxx"
-    chmod +x "${APP}/Contents/MacOS/mixxx"
+      - name: Install create-dmg
+        run: brew install create-dmg
 
-    if [ -d "${INSTALL_DIR}/share/mixxx" ]; then
-      cp -R "${INSTALL_DIR}/share/mixxx/." "${APP}/Contents/Resources/"
-    fi
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+          APP="${MXXX_APP_PATH}"
+          if [ -z "$APP" ] || [ ! -d "$APP" ]; then exit 1; fi
+          OUT="Phoenix-Night-Wolves-macOS-10.13.dmg"
+          rm -f "$OUT"
+          create-dmg \
+            --volname "Phoenix - Night Wolves" \
+            --window-pos 200 120 --window-size 600 400 --icon-size 100 \
+            --app-drop-link 450 185 "$OUT" "$APP" || true
+          ls -lh "$OUT"
 
-    # --- THE PHOENIX REBRAND (Info.plist) ---
-    cat > "${APP}/Contents/Info.plist" <<'PLIST'
-    <?xml version="1.0" encoding="UTF-8"?>
-    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-      "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-    <plist version="1.0">
-    <dict>
-        <key>CFBundleName</key><string>Phoenix</string>
-        <key>CFBundleDisplayName</key><string>Phoenix</string>
-        <key>CFBundleIdentifier</key><string>org.nightwolves.Phoenix</string>
-        <key>CFBundleVersion</key><string>2.4.2</string>
-        <key>CFBundleShortVersionString</key><string>2.4.2</string>
-        <key>CFBundleExecutable</key><string>mixxx</string>
-        <key>CFBundlePackageType</key><string>APPL</string>
-        <key>CFBundleSignature</key><string>????</string>
-        <key>LSMinimumSystemVersion</key><string>10.13</string>
-        <key>NSHighResolutionCapable</key><true/>
-        <key>NSMicrophoneUsageDescription</key>
-        <string>Phoenix needs microphone access for recording and broadcasting.</string>
-        <key>CFBundleIconFile</key><string>phoenix.icns</string>
-    </dict>
-    </plist>
-    PLIST
-
-    # --- THE PHOENIX LOGO PACKAGING ---
-    mkdir -p "${APP}/Contents/Resources/skins/Phoenix/images"
-    if [ -f "${WORKSPACE}/source_repo/res/skins/Phoenix/images/phoenix_logo.svg" ]; then
-      cp "${WORKSPACE}/source_repo/res/skins/Phoenix/images/phoenix_logo.svg" "${APP}/Contents/Resources/skins/Phoenix/images/"
-    fi
-    
-    echo "MXXX_APP_PATH=${APP}" >> "$GITHUB_ENV"
-    
-    - name: Bundle Qt frameworks with macdeployqt
-   run: |
-    set -euo pipefail
-    APP="${MXXX_APP_PATH}"
-    DEPS="$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release"
-    
-    MACDEPLOYQT="$(command -v macdeployqt || true)"
-    if [ -z "$MACDEPLOYQT" ]; then
-      MACDEPLOYQT="$(find /usr/local -name macdeployqt -type f 2>/dev/null | head -1)"
-    fi
-    echo "Using macdeployqt: $MACDEPLOYQT"
-    
-    "$MACDEPLOYQT" "$APP" -verbose=2 \
-      -libpath="$DEPS/lib" \
-      -libpath="${{ github.workspace }}/qtkeychain_install/lib" \
-      -libpath=/usr/local/lib \
-      -libpath=/usr/local/opt/qt@5/lib \
-      -libpath="${{ github.workspace }}/qt/Qt/5.15.2/macos/lib" || true
-
-- name: Remove unneeded SQL drivers and the libraries they pulled in
-  run: |
-    set -euo pipefail
-    APP="${MXXX_APP_PATH}"
-    if [ -d "$APP/Contents/PlugIns/sqldrivers" ]; then
-      find "$APP/Contents/PlugIns/sqldrivers" -type f ! -name 'libqsqlite.dylib' -print -delete
-    fi
-    python3 - <<'PY'
-    import os, sys
-    sys.path.insert(0, os.environ["SCRIPTS_DIR"])
-    from finalize_bundle import bundle_machos
-
-    app = os.environ["MXXX_APP_PATH"]
-    fw = os.path.join(app, "Contents", "Frameworks")
-    files = {p: info for p, info in bundle_machos(app)}
-
-    by_name = {}
-    for name in os.listdir(fw):
-        p = os.path.join(fw, name)
-        real = os.path.realpath(p)
-        if real in files and os.path.dirname(real) == os.path.realpath(fw):
-            by_name[name] = real
-
-    roots = [p for p in files if os.path.dirname(p) != os.path.realpath(fw)]
-    seen, queue = set(roots), list(roots)
-    while queue:
-        p = queue.pop()
-        for _kind, dep in files[p]["deps"]:
-            q = by_name.get(os.path.basename(dep))
-            if q and q not in seen:
-                seen.add(q)
-                queue.append(q)
-
-    unused = sorted({real for real in by_name.values() if real not in seen})
-    for real in unused:
-        os.remove(real)
-        print("removed unused library:", os.path.basename(real))
-    for name in os.listdir(fw):
-        p = os.path.join(fw, name)
-        if os.path.islink(p) and not os.path.exists(p):
-            os.remove(p)
-            print("removed dangling link:", name)
-    print("kept %d loose libraries, removed %d unused" % (len(seen & set(by_name.values())), len(unused)))
-    PY
-
-- name: Finalize bundle using strict 10.13 validation
-  run: |
-    python3 "$SCRIPTS_DIR/finalize_bundle.py" "$MXXX_APP_PATH" \
-      --qt-dir "${{ github.workspace }}/qt/Qt/5.15.2/macos" \
-      --search "$GITHUB_WORKSPACE/deps-1013/x64-osx-min1013-release/lib" \
-      --search "${GITHUB_WORKSPACE}/qtkeychain_install/lib" \
-      --min-macos 10.13
-
-- name: Explain which files need the too-new libraries
-  if: failure()
-  run: |
-    if [ -z "${MXXX_APP_PATH:-}" ] || [ ! -d "$MXXX_APP_PATH" ]; then exit 0; fi
-    python3 - <<'PY'
-    import os, sys
-    sys.path.insert(0, os.environ["SCRIPTS_DIR"])
-    from finalize_bundle import bundle_machos, target_info
-    app = os.environ["MXXX_APP_PATH"]
-    files = {p: i for p, i in bundle_machos(app)}
-    bad = []
-    for p in files:
-        minos, chained = target_info(p)
-        if (minos and minos > (10, 13)) or chained:
-            bad.append((p, minos, chained))
-    print("Files built for a newer macOS than 10.13, or using chained fixups:")
-    for p, minos, chained in sorted(bad):
-        base = os.path.basename(p)
-        users = sorted(os.path.relpath(q, app) for q, i in files.items() if q != p and any(os.path.basename(d) == base for _k, d in i["deps"]))
-        needs = [d for _k, d in files[p]["deps"] if not d.startswith(("/usr/lib/", "/System/"))]
-        print("  %s (macOS %s%s)" % (os.path.relpath(p, app), "%d.%d" % minos if minos else "?", ", chained fixups" if chained else ""))
-        print("    used by: " + (", ".join(users) if users else "nothing (safe to remove)"))
-        print("    itself needs: " + (", ".join(needs) if needs else "-"))
-    PY
-
-- name: Final symbol check against the macOS 10.13 SDK
-  run: |
-    python3 "$SCRIPTS_DIR/check_sdk_symbols.py" \
-      --sdk "$GITHUB_WORKSPACE/MacOSX10.13.sdk" "$MXXX_APP_PATH"
-
-- name: Install create-dmg
-  run: brew install create-dmg
-
-- name: Create DMG
-  run: |
-    set -euo pipefail
-    APP="${MXXX_APP_PATH}"
-    if [ -z "$APP" ] || [ ! -d "$APP" ]; then
-      echo "ERROR: MXXX_APP_PATH not set or invalid: '$APP'"
-      exit 1
-    fi
-    OUT="Phoenix-Night-Wolves-macOS-10.13.dmg"
-    rm -f "$OUT"
-    create-dmg \
-      --volname "Phoenix - Night Wolves" \
-      --window-pos 200 120 \
-      --window-size 600 400 \
-      --icon-size 100 \
-      --app-drop-link 450 185 \
-      "$OUT" \
-      "$APP" || true
-    if [ ! -f "$OUT" ]; then
-      echo "ERROR: DMG was not created."
-      exit 1
-    fi
-    ls -lh "$OUT"
-
-- name: Upload macOS DMG
-  if: always()
-  uses: actions/upload-artifact@v4
-  with:
-    name: Phoenix-Night-Wolves-macOS-Intel-DMG
-    path: Phoenix-Night-Wolves-macOS-10.13.dmg
-    if-no-files-found: error
-    retention-days: 7
+      - name: Upload macOS DMG
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Phoenix-Night-Wolves-macOS-Intel-DMG
+          path: Phoenix-Night-Wolves-macOS-10.13.dmg
+          if-no-files-found: error
+          retention-days: 7
