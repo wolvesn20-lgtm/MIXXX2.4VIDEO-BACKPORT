@@ -3,7 +3,11 @@
 #include <QImage>
 #include <QMutex>
 #include <QThread>
-#include "control/controlproxy.h"
+#include <QString>
+
+// Forward declaration tells the compiler the class exists without 
+// heavy header pollution, keeping compilation times blazing fast.
+class ControlProxy;
 
 class VideoDecoder : public QThread {
     Q_OBJECT
@@ -15,7 +19,7 @@ public:
     void close();
 
 signals:
-    void frameDecoded(const QImage& frame);
+    void frameDecoded(const QImage& image);
     void openFailed(const QString& reason);
 
 protected:
@@ -27,5 +31,8 @@ private:
     bool m_abort{false};
     
     QString m_group;
+    
+    // Mixxx Core Control Engine Links (Initialized using 2.4 ConfigKeys)
     ControlProxy* m_pPlayPosition{nullptr};
+    ControlProxy* m_pPlay{nullptr}; // Added to handle track Play/Pause status safely
 };
