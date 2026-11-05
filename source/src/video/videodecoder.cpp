@@ -18,7 +18,8 @@ extern "C" {
 
 // Mixxx 2.4 Legacy Engine Control Proxies
 #include "control/controlproxy.h"
-#include "control/configkey.h"
+#include "control/control.h"
+
 
 namespace {
 
