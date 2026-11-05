@@ -1,3 +1,9 @@
+#pragma once
+
+#include <QImage>
+#include <QMutex>
+#include <QThread>
+#include <QString>
 void VideoDecoder::run() {
     QString path;
     {
