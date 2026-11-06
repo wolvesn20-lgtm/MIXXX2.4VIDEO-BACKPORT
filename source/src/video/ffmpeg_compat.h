@@ -1,48 +1,26 @@
 #pragma once
 
-#include <QImage>
-#include <QMutex>
-#include <QThread>
-#include <QString>
-#include "control/controlproxy.h"
+// 1. Essential C linkage wrap for standard C++ compilation compatibility
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libswscale/swscale.h>
+#include <libavutil/avutil.h>
+#include <libavutil/imgutils.h>
+}
 
-class VideoDecoder : public QThread {
-    Q_OBJECT
-public:
-    explicit VideoDecoder(const QString& group, QObject* parent = nullptr); 
-    ~VideoDecoder() override;
+// 2. Public Portability Bridge: Translates legacy/modern API shifts across platforms
+#ifndef av_packet_unref
+#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(57, 7, 0)
+#define av_packet_unref av_free_packet
+#endif
+#endif
 
-    void openFile(const QString& path);
-    void close();
+#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(55, 28, 1)
+#define av_frame_alloc avcodec_alloc_frame
+#define av_frame_free avcodec_free_frame
+#endif
 
-    // Shared buffer and property accessors
-    uchar* getPixelData() { return m_pixelData; }
-    int getImageWidth() const { return m_width; }
-    int getImageHeight() const { return m_height; }
-    double getCalculatedOpacity() const { return m_calculatedOpacity; }
-    QMutex* getBufferMutex() { return &m_bufferMutex; }
-
-signals:
-    void frameReady(); // Lightweight data-free notification ping
-    void openFailed(const QString& reason);
-
-protected:
-    void run() override;
-
-private:
-    QString m_path;
-    QMutex m_mutex;
-    QMutex m_bufferMutex; // Protects the shared pixel buffer
-    bool m_abort{false};
-    
-    QString m_group;
-    ControlProxy* m_pPlayPosition{nullptr};
-    ControlProxy* m_pPlay{nullptr};
-    ControlProxy* m_pVolume{nullptr};      // Tracks Channel Volume (0.0 to 1.0)
-    ControlProxy* m_pCrossfader{nullptr};  // Tracks Master Crossfader (-1.0 to 1.0)
-
-    uchar* m_pixelData{nullptr};
-    int m_width{0};
-    int m_height{0};
-    double m_calculatedOpacity{1.0};       // Live channel opacity value
-};
+#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(55, 52, 0)
+#define avcodec_free_context av_freep
+#endif
