@@ -139,7 +139,6 @@ void VideoDecoder::run() {
             brandingImg.load("res/images/branding_default.png");
         }
 
-        double durationMs = formatCtx->duration / 1000.0;
         bool aborted = false;
 
         while (!aborted) {
@@ -266,6 +265,8 @@ void VideoDecoder::run() {
                 break; 
             } else if (frameTimeMs < audioTimeMs - 50.0) {
                 av_frame_unref(frame); 
+                // THE FIX: Give the CPU 5ms to decode the next keyframe
+                QThread::msleep(5); 
                 continue; 
             }
 
