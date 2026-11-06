@@ -1,24 +1,43 @@
 #pragma once
 
-#include <QWidget>
-#include "track/track.h"
+#include <QImage>
+#include <QMutex>
+#include <QThread>
+#include "control/controlproxy.h"
 
-class VideoDecoder;
-
-class VideoWidget : public QWidget {
+class VideoDecoder : public QThread {
     Q_OBJECT
 public:
-    VideoWidget(const QString& group, QWidget* parent = nullptr);
-    ~VideoWidget() override;
+    explicit VideoDecoder(const QString& group, QObject* parent = nullptr); 
+    ~VideoDecoder() override;
 
-public slots:
-    void slotLoadTrack(TrackPointer track);
-    void slotFrameReady(); // <-- Must match the new signal
+    void openFile(const QString& path);
+    void close();
+
+    // Shared buffer accessors for the UI thread
+    uchar* getPixelData() { return m_pixelData; }
+    int getImageWidth() const { return m_width; }
+    int getImageHeight() const { return m_height; }
+    QMutex* getBufferMutex() { return &m_bufferMutex; }
+
+signals:
+    void frameReady(); // Lightweight ping for the UI
+    void openFailed(const QString& reason);
 
 protected:
-    void paintEvent(QPaintEvent* event) override;
+    void run() override;
 
 private:
+    QString m_path;
+    QMutex m_mutex;
+    QMutex m_bufferMutex;
+    bool m_abort{false};
+    
     QString m_group;
-    VideoDecoder* m_decoder;
+    ControlProxy* m_pPlayPosition{nullptr};
+    ControlProxy* m_pPlay{nullptr};
+
+    uchar* m_pixelData{nullptr};
+    int m_width{0};
+    int m_height{0};
 };
