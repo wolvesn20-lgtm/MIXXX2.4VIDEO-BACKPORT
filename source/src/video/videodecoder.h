@@ -4,6 +4,8 @@
 #include <QImage>
 #include <QPaintEvent>
 #include "video/videodecoder.h"
+#include "video/videodecoder.h" // Or whichever header contains: class VideoDecoder { ... };
+class VideoDecoder;
 
 class VideoWidget : public QWidget {
     Q_OBJECT
