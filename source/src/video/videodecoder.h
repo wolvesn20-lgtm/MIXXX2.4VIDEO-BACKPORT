@@ -1,38 +1,60 @@
-#pragma once
+#include "video/videowidget.h"
+#include <QPainter>
+#include <QMutexLocker>
 
-#include <QImage>
-#include <QMutex>
-#include <QThread>
-#include <QString>
+VideoWidget::VideoWidget(QWidget* parent) : QWidget(parent) {
+    setAttribute(Qt::WA_OpaquePaintEvent); // Optimization: tells Qt widget background clearing isn't forced
+}
 
-// Forward declaration tells the compiler the class exists without 
-// heavy header pollution, keeping compilation times blazing fast.
-class ControlProxy;
+void VideoWidget::setDecoder(VideoDecoder* decoder) {
+    m_pDecoder = decoder;
+    if (m_pDecoder) {
+        connect(m_pDecoder, &VideoDecoder::frameReady, this, &VideoWidget::slotFrameReady, Qt::QueuedConnection);
+    }
+}
 
-class VideoDecoder : public QThread {
-    Q_OBJECT
-public:
-    explicit VideoDecoder(const QString& group, QObject* parent = nullptr); 
-    ~VideoDecoder() override;
+void VideoWidget::slotFrameReady() {
+    if (!m_pDecoder) return;
 
-    void openFile(const QString& path);
-    void close();
+    QMutex* decoderMutex = m_pDecoder->getBufferMutex();
+    int width = m_pDecoder->getImageWidth();
+    int height = m_pDecoder->getImageHeight();
+    uchar* rawPixels = m_pDecoder->getPixelData();
 
-signals:
-    void frameDecoded(const QImage& image);
-    void openFailed(const QString& reason);
+    if (!rawPixels || width <= 0 || height <= 0) return;
 
-protected:
-    void run() override;
+    // Fast local memory snapshot copy from the worker thread's buffer
+    {
+        QMutexLocker lock(decoderMutex);
+        QImage sharedWrapper(rawPixels, width, height, QImage::Format_RGB32);
+        m_uiFrame = sharedWrapper.copy(); // Fast CPU line-by-line memory copy snapshot
+    }
 
-private:
-    QString m_path;
-    QMutex m_mutex;
-    bool m_abort{false};
+    update(); // Schedules standard paint refresh call execution
+}
+
+void VideoWidget::paintEvent(QPaintEvent* event) {
+    QPainter painter(this);
     
-    QString m_group;
+    if (m_uiFrame.isNull()) {
+        painter.fillRect(rect(), Qt::black); // Display clean fallback container canvas if empty
+        return;
+    }
+
+    // 1. LAYOUT ASPECT RATIO FIX (Prevents distortion inside LateNight skin container layout)
+    QSize frameSize = m_uiFrame.size();
+    QRect targetRect = rect();
+    QSize scaledSize = frameSize.scaled(targetRect.size(), Qt::KeepAspectRatio);
     
-    // Mixxx Core Control Engine Links (Initialized using 2.4 ConfigKeys)
-    ControlProxy* m_pPlayPosition{nullptr};
-    ControlProxy* m_pPlay{nullptr}; // Added to handle track Play/Pause status safely
-};
+    // Position bounding box accurately at center offsets
+    int x = (targetRect.width() - scaledSize.width()) / 2;
+    int y = (targetRect.height() - scaledSize.height()) / 2;
+    QRect centeredLayoutRect(x, y, scaledSize.width(), scaledSize.height());
+
+    // 2. FADER LIVE OPACITY LAYER REGULATION
+    double opacity = m_pDecoder ? m_pDecoder->getCalculatedOpacity() : 1.0;
+    painter.setOpacity(opacity);
+
+    // 3. FAST FRAME BLITTING EXECUTION
+    painter.drawImage(centeredLayoutRect, m_uiFrame);
+}
