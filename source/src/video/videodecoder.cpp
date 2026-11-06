@@ -4,6 +4,7 @@
 #include <QMutex>
 #include <QThread>
 #include "control/controlproxy.h"
+#include "videodecoder.moc"
 
 class VideoDecoder : public QThread {
     Q_OBJECT
