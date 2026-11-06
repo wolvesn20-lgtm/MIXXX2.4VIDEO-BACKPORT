@@ -14,15 +14,14 @@ public:
     void openFile(const QString& path);
     void close();
 
-    // Shared buffer accessors for the UI thread
     uchar* getPixelData() { return m_pixelData; }
     int getImageWidth() const { return m_width; }
     int getImageHeight() const { return m_height; }
     QMutex* getBufferMutex() { return &m_bufferMutex; }
 
 signals:
-    void frameReady(); // Lightweight ping for the UI
-    void openFailed(const QString& reason);
+    void frameReady();
+    void openFailed(const QString& reason); // <-- ONLY HERE
 
 protected:
     void run() override;
