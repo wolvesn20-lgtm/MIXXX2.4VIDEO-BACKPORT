@@ -1,60 +1,74 @@
 #include "video/videowidget.h"
+#include "video/videodecoder.h"
+
+#include <QFileInfo>
 #include <QPainter>
 #include <QMutexLocker>
 
-VideoWidget::VideoWidget(QWidget* parent) : QWidget(parent) {
-    setAttribute(Qt::WA_OpaquePaintEvent); // Optimization: tells Qt widget background clearing isn't forced
-}
+#include "mixer/basetrackplayer.h"
+#include "track/track.h"
 
-void VideoWidget::setDecoder(VideoDecoder* decoder) {
-    m_pDecoder = decoder;
-    if (m_pDecoder) {
-        connect(m_pDecoder, &VideoDecoder::frameReady, this, &VideoWidget::slotFrameReady, Qt::QueuedConnection);
-    }
-}
-
-void VideoWidget::slotFrameReady() {
-    if (!m_pDecoder) return;
-
-    QMutex* decoderMutex = m_pDecoder->getBufferMutex();
-    int width = m_pDecoder->getImageWidth();
-    int height = m_pDecoder->getImageHeight();
-    uchar* rawPixels = m_pDecoder->getPixelData();
-
-    if (!rawPixels || width <= 0 || height <= 0) return;
-
-    // Fast local memory snapshot copy from the worker thread's buffer
-    {
-        QMutexLocker lock(decoderMutex);
-        QImage sharedWrapper(rawPixels, width, height, QImage::Format_RGB32);
-        m_uiFrame = sharedWrapper.copy(); // Fast CPU line-by-line memory copy snapshot
-    }
-
-    update(); // Schedules standard paint refresh call execution
-}
-
-void VideoWidget::paintEvent(QPaintEvent* event) {
-    QPainter painter(this);
+VideoWidget::VideoWidget(const QString& group, QWidget* parent)
+        : QWidget(parent),
+          m_group(group),
+          m_decoder(new VideoDecoder(group, this)) {
+    setMinimumSize(160, 90);
+    setAutoFillBackground(true);
     
-    if (m_uiFrame.isNull()) {
-        painter.fillRect(rect(), Qt::black); // Display clean fallback container canvas if empty
+    // Connect the lightweight signal
+    connect(m_decoder, &VideoDecoder::frameReady,
+            this, &VideoWidget::slotFrameReady);
+}
+
+VideoWidget::~VideoWidget() {
+    m_decoder->close();
+}
+
+void VideoWidget::slotLoadTrack(TrackPointer track) {
+    m_decoder->close();
+    if (!track) {
+        update();
         return;
     }
 
-    // 1. LAYOUT ASPECT RATIO FIX (Prevents distortion inside LateNight skin container layout)
-    QSize frameSize = m_uiFrame.size();
-    QRect targetRect = rect();
-    QSize scaledSize = frameSize.scaled(targetRect.size(), Qt::KeepAspectRatio);
-    
-    // Position bounding box accurately at center offsets
-    int x = (targetRect.width() - scaledSize.width()) / 2;
-    int y = (targetRect.height() - scaledSize.height()) / 2;
-    QRect centeredLayoutRect(x, y, scaledSize.width(), scaledSize.height());
+    const QFileInfo audio(track->getLocation());
+    const QString base = audio.absolutePath() + "/" + audio.completeBaseName();
+    const QStringList extensions = {QStringLiteral(".mp4"), QStringLiteral(".mkv"),
+            QStringLiteral(".mov"), QStringLiteral(".webm")};
+    for (const QString& extension : extensions) {
+        const QString candidate = base + extension;
+        if (QFileInfo::exists(candidate)) {
+            m_decoder->openFile(candidate);
+            break;
+        }
+    }
+    update();
+}
 
-    // 2. FADER LIVE OPACITY LAYER REGULATION
-    double opacity = m_pDecoder ? m_pDecoder->getCalculatedOpacity() : 1.0;
-    painter.setOpacity(opacity);
+void VideoWidget::slotFrameReady() {
+    // Just trigger a repaint, no deep copy!
+    update();
+}
 
-    // 3. FAST FRAME BLITTING EXECUTION
-    painter.drawImage(centeredLayoutRect, m_uiFrame);
+void VideoWidget::paintEvent(QPaintEvent*) {
+    QPainter painter(this);
+    painter.fillRect(rect(), Qt::black);
+
+    if (!m_decoder) return;
+
+    // Read directly from the shared memory buffer
+    QMutexLocker locker(m_decoder->getBufferMutex());
+    uchar* data = m_decoder->getPixelData();
+    int w = m_decoder->getImageWidth();
+    int h = m_decoder->getImageHeight();
+
+    if (data && w > 0 && h > 0) {
+        QImage frame(data, w, h, QImage::Format_RGB32);
+        if (!frame.isNull()) {
+            const QSize target = frame.size().scaled(size(), Qt::KeepAspectRatio);
+            const QPoint offset((width() - target.width()) / 2,
+                    (height() - target.height()) / 2);
+            painter.drawImage(QRect(offset, target), frame);
+        }
+    }
 }
