@@ -5,6 +5,7 @@
 #include <QThread>
 #include "control/controlproxy.h"
 
+// Forward declaration to prevent circular dependency
 class VideoDecoder : public QThread {
     Q_OBJECT
 public:
@@ -14,14 +15,15 @@ public:
     void openFile(const QString& path);
     void close();
 
+    // Accessors for the shared buffer
     uchar* getPixelData() { return m_pixelData; }
     int getImageWidth() const { return m_width; }
     int getImageHeight() const { return m_height; }
     QMutex* getBufferMutex() { return &m_bufferMutex; }
 
 signals:
-    void frameReady();
-    void openFailed(const QString& reason); // <-- ONLY HERE
+    void frameReady(); 
+    void openFailed(const QString& reason);
 
 protected:
     void run() override;
