@@ -4,7 +4,16 @@
 #include <QMutex>
 #include <QThread>
 #include "control/controlproxy.h"
+#pragma once
 
+#include <QImage>
+#include <QMutex>
+#include <QThread>
+#include "control/controlproxy.h"
+
+class VideoDecoder : public QThread {
+    Q_OBJECT
+// ...
 // Forward declaration to prevent circular dependency
 class VideoDecoder : public QThread {
     Q_OBJECT
