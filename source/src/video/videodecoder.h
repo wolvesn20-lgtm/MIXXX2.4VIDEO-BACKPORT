@@ -21,7 +21,7 @@ public:
 
 signals:
     void frameReady(); 
-    void openFailed(const QString& reason); // <-- Check this line carefully
+    void openFailed(const QString& reason);
 
 protected:
     void run() override;
