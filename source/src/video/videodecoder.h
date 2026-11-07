@@ -4,17 +4,7 @@
 #include <QMutex>
 #include <QThread>
 #include "control/controlproxy.h"
-#pragma once
 
-#include <QImage>
-#include <QMutex>
-#include <QThread>
-#include "control/controlproxy.h"
-
-class VideoDecoder : public QThread {
-    Q_OBJECT
-// ...
-// Forward declaration to prevent circular dependency
 class VideoDecoder : public QThread {
     Q_OBJECT
 public:
@@ -24,7 +14,6 @@ public:
     void openFile(const QString& path);
     void close();
 
-    // Accessors for the shared buffer
     uchar* getPixelData() { return m_pixelData; }
     int getImageWidth() const { return m_width; }
     int getImageHeight() const { return m_height; }
@@ -32,7 +21,7 @@ public:
 
 signals:
     void frameReady(); 
-    void openFailed(const QString& reason);
+    void openFailed(const QString& reason); // <-- Check this line carefully
 
 protected:
     void run() override;
