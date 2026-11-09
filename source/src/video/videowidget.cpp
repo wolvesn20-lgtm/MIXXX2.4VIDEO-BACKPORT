@@ -1,60 +1,20 @@
 #include "video/videowidget.h"
-#include "video/videodecoder.h"
-
-#include <QFileInfo>
 #include <QPainter>
 #include <QMutexLocker>
 
-#include "mixer/basetrackplayer.h"
-#include "track/track.h"
-
-VideoWidget::VideoWidget(const QString& group, QWidget* parent)
-        : QWidget(parent),
-          m_group(group),
-          m_decoder(new VideoDecoder(group, this)) {
-    setMinimumSize(160, 90);
-    setAutoFillBackground(true);
-    
-    // Connect the lightweight signal
-    connect(m_decoder, &VideoDecoder::frameReady,
-            this, &VideoWidget::slotFrameReady);
+VideoWidget::VideoWidget(QWidget* parent) : QWidget(parent) {
+    setAttribute(Qt::WA_OpaquePaintEvent); 
 }
 
-VideoWidget::~VideoWidget() {
-    m_decoder->close();
-}
-
-void VideoWidget::slotLoadTrack(TrackPointer track) {
-    m_decoder->close();
-    if (!track) {
-        update();
-        return;
+void VideoWidget::setDecoder(VideoDecoder* decoder) {
+    m_pDecoder = decoder;
+    if (m_pDecoder) {
+        connect(m_pDecoder, &VideoDecoder::frameReady, this, &VideoWidget::slotFrameReady, Qt::QueuedConnection);
     }
-
-    const QFileInfo audio(track->getLocation());
-    const QString base = audio.absolutePath() + "/" + audio.completeBaseName();
-    const QStringList extensions = {QStringLiteral(".mp4"), QStringLiteral(".mkv"),
-            QStringLiteral(".mov"), QStringLiteral(".webm")};
-    for (const QString& extension : extensions) {
-        const QString candidate = base + extension;
-        if (QFileInfo::exists(candidate)) {
-            m_decoder->openFile(candidate);
-            break;
-        }
-    }
-    update();
 }
-
-// Keep a local uint64_t m_lastRenderedFrame{0}; in your VideoWidget private section
 
 void VideoWidget::slotFrameReady() {
     if (!m_pDecoder) return;
-
-    // Check if a genuinely new frame has been populated
-    uint64_t currentFrameCount = m_pDecoder->getFrameCounter(); // Create a getter for m_frameCounter
-    if (currentFrameCount == m_lastRenderedFrame) {
-        return; // Skip reading stale data entirely!
-    }
 
     QMutex* decoderMutex = m_pDecoder->getBufferMutex();
     int width = m_pDecoder->getImageWidth();
@@ -63,36 +23,39 @@ void VideoWidget::slotFrameReady() {
 
     if (!rawPixels || width <= 0 || height <= 0) return;
 
+    uint64_t currentFrameCount = m_pDecoder->getFrameCounter();
+    if (currentFrameCount == m_lastRenderedFrame) {
+        return; 
+    }
+
     {
         QMutexLocker lock(decoderMutex);
         QImage sharedWrapper(rawPixels, width, height, QImage::Format_RGB32);
         m_uiFrame = sharedWrapper.copy(); 
-        m_lastRenderedFrame = currentFrameCount; // Mark this specific frame index as rendered
+        m_lastRenderedFrame = currentFrameCount;
     }
 
     update(); 
 }
 
-
-void VideoWidget::paintEvent(QPaintEvent*) {
+void VideoWidget::paintEvent(QPaintEvent* event) {
     QPainter painter(this);
-    painter.fillRect(rect(), Qt::black);
-
-    if (!m_decoder) return;
-
-    // Read directly from the shared memory buffer
-    QMutexLocker locker(m_decoder->getBufferMutex());
-    uchar* data = m_decoder->getPixelData();
-    int w = m_decoder->getImageWidth();
-    int h = m_decoder->getImageHeight();
-
-    if (data && w > 0 && h > 0) {
-        QImage frame(data, w, h, QImage::Format_RGB32);
-        if (!frame.isNull()) {
-            const QSize target = frame.size().scaled(size(), Qt::KeepAspectRatio);
-            const QPoint offset((width() - target.width()) / 2,
-                    (height() - target.height()) / 2);
-            painter.drawImage(QRect(offset, target), frame);
-        }
+    
+    if (m_uiFrame.isNull()) {
+        painter.fillRect(rect(), Qt::black); 
+        return;
     }
+
+    QSize frameSize = m_uiFrame.size();
+    QRect targetRect = rect();
+    QSize scaledSize = frameSize.scaled(targetRect.size(), Qt::KeepAspectRatio);
+    
+    int x = (targetRect.width() - scaledSize.width()) / 2;
+    int y = (targetRect.height() - scaledSize.height()) / 2;
+    QRect centeredLayoutRect(x, y, scaledSize.width(), scaledSize.height());
+
+    double opacity = m_pDecoder ? m_pDecoder->getCalculatedOpacity() : 1.0;
+    painter.setOpacity(opacity);
+
+    painter.drawImage(centeredLayoutRect, m_uiFrame);
 }
