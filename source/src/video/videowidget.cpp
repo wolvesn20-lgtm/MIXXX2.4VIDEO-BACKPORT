@@ -45,10 +45,34 @@ void VideoWidget::slotLoadTrack(TrackPointer track) {
     update();
 }
 
+// Keep a local uint64_t m_lastRenderedFrame{0}; in your VideoWidget private section
+
 void VideoWidget::slotFrameReady() {
-    // Just trigger a repaint, no deep copy!
-    update();
+    if (!m_pDecoder) return;
+
+    // Check if a genuinely new frame has been populated
+    uint64_t currentFrameCount = m_pDecoder->getFrameCounter(); // Create a getter for m_frameCounter
+    if (currentFrameCount == m_lastRenderedFrame) {
+        return; // Skip reading stale data entirely!
+    }
+
+    QMutex* decoderMutex = m_pDecoder->getBufferMutex();
+    int width = m_pDecoder->getImageWidth();
+    int height = m_pDecoder->getImageHeight();
+    uchar* rawPixels = m_pDecoder->getPixelData();
+
+    if (!rawPixels || width <= 0 || height <= 0) return;
+
+    {
+        QMutexLocker lock(decoderMutex);
+        QImage sharedWrapper(rawPixels, width, height, QImage::Format_RGB32);
+        m_uiFrame = sharedWrapper.copy(); 
+        m_lastRenderedFrame = currentFrameCount; // Mark this specific frame index as rendered
+    }
+
+    update(); 
 }
+
 
 void VideoWidget::paintEvent(QPaintEvent*) {
     QPainter painter(this);
