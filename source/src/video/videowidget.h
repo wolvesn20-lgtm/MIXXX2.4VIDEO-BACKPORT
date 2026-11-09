@@ -1,24 +1,24 @@
 #pragma once
 
 #include <QWidget>
-#include "track/track.h"
-
-class VideoDecoder;
+#include <QImage>
+#include <QPaintEvent>
+#include "video/videodecoder.h"
 
 class VideoWidget : public QWidget {
     Q_OBJECT
 public:
-    VideoWidget(const QString& group, QWidget* parent = nullptr);
-    ~VideoWidget() override;
+    explicit VideoWidget(QWidget* parent = nullptr);
+    void setDecoder(VideoDecoder* decoder);
 
 public slots:
-    void slotLoadTrack(TrackPointer track);
-    void slotFrameReady(); 
+    void slotFrameReady(); // Listens to the lightweight frame ping
 
 protected:
     void paintEvent(QPaintEvent* event) override;
 
 private:
-    QString m_group;
-    VideoDecoder* m_decoder;
+    VideoDecoder* m_pDecoder{nullptr};
+    QImage m_uiFrame;                 // <--- FIX: Added missing UI thread rendering cache
+    uint64_t m_lastRenderedFrame{0};  // <--- FIX: Added missing tracking counter variable
 };
