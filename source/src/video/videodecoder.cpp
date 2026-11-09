@@ -62,112 +62,154 @@ void VideoDecoder::close() {
 }
 
 void VideoDecoder::run() {
-    QString path;
-    {
-        QMutexLocker locker(&m_mutex);
-        path = m_path;
+    // 1. FFMPEG ARCHITECTURE INITIALIZATION
+    AVFormatContext* formatCtx = avformat_alloc_context();
+    if (avformat_open_input(&formatCtx, m_path.toUtf8().constData(), nullptr, nullptr) < 0) {
+        emit openFailed("Could not open video file container format.");
+        return;
     }
-    if (path.isEmpty()) return;
 
-    AVFormatContext* formatCtx = nullptr;
-    if (avformat_open_input(&formatCtx, path.toUtf8().constData(), nullptr, nullptr) < 0) return;
-    if (avformat_find_stream_info(formatCtx, nullptr) < 0) { avformat_close_input(&formatCtx); return; }
+    if (avformat_find_stream_info(formatCtx, nullptr) < 0) {
+        emit openFailed("Could not read stream context metadata.");
+        avformat_close_input(&formatCtx);
+        return;
+    }
 
-    int videoStreamIndex = -1;
-    for (unsigned int i = 0; i < formatCtx->nb_streams; ++i) {
+    int videoStreamIdx = -1;
+    for (unsigned int i = 0; i < formatCtx->nb_streams; i++) {
         if (formatCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-            videoStreamIndex = static_cast<int>(i);
+            videoStreamIdx = i;
             break;
         }
     }
-    if (videoStreamIndex < 0) { avformat_close_input(&formatCtx); return; }
 
-    AVCodecParameters* codecParams = formatCtx->streams[videoStreamIndex]->codecpar;
-    const AVCodec* codec = avcodec_find_decoder(codecParams->codec_id);
-    if (!codec) { avformat_close_input(&formatCtx); return; }
+    if (videoStreamIdx == -1) {
+        emit openFailed("No valid video stream track track found in file.");
+        avformat_close_input(&formatCtx);
+        return;
+    }
 
+    AVCodecParameters* codecPar = formatCtx->streams[videoStreamIdx]->codecpar;
+    const AVCodec* codec = avcodec_find_decoder(codecPar->codec_id);
     AVCodecContext* codecCtx = avcodec_alloc_context3(codec);
-    if (!codecCtx || avcodec_parameters_to_context(codecCtx, codecParams) < 0) {
-        if (codecCtx) avcodec_free_context(&codecCtx);
-        avformat_close_input(&formatCtx); return;
-    }
+    avcodec_parameters_to_context(codecCtx, codecPar);
+
     if (avcodec_open2(codecCtx, codec, nullptr) < 0) {
+        emit openFailed("Could not instantiate hardware or software codec engine initialization.");
         avcodec_free_context(&codecCtx);
-        avformat_close_input(&formatCtx); return;
+        avformat_close_input(&formatCtx);
+        return;
     }
 
-    m_width = codecCtx->width;
-    m_height = codecCtx->height;
-    
-    {
-        QMutexLocker locker(&m_bufferMutex);
-        if (m_pixelData) delete[] m_pixelData;
-        m_pixelData = new uchar[m_width * m_height * 4];
-    }
-
+    // Initialize software scaler mapping YUV planes to local RGB32 memory space cleanly
     SwsContext* swsCtx = sws_getContext(
-            m_width, m_height, codecCtx->pix_fmt,
-            m_width, m_height, AV_PIX_FMT_BGRA,
-            SWS_BILINEAR, nullptr, nullptr, nullptr);
+        codecCtx->width, codecCtx->height, codecCtx->pix_fmt,
+        codecCtx->width, codecCtx->height, AV_PIX_FMT_RGB32,
+        SWS_BILINEAR, nullptr, nullptr, nullptr
+    );
 
     AVPacket* packet = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
-    double durationMs = formatCtx->duration / 1000.0; 
-    bool aborted = false;
-    double lastTargetAudioTimeMs = -1.0;
 
-    while (!aborted) {
+    // Track total length metrics if metadata stream exists safely
+    double totalDurationSeconds = 0.0;
+    if (formatCtx->streams[videoStreamIdx]->duration != AV_NOPTS_VALUE) {
+        totalDurationSeconds = formatCtx->streams[videoStreamIdx]->duration * 
+                               av_q2d(formatCtx->streams[videoStreamIdx]->time_base);
+    } else if (formatCtx->duration != AV_NOPTS_VALUE) {
+        totalDurationSeconds = static_cast<double>(formatCtx->duration) / AV_TIME_BASE;
+    }
+
+    // 2. THE MAIN LOOP PIPELINE EXECUTOR
+    while (true) {
         {
-            QMutexLocker locker(&m_mutex);
-            if (m_abort || m_path != path) { aborted = true; break; }
-        }
-        if (!m_pPlayPosition || !m_pPlay) { QThread::msleep(10); continue; }
-        if (m_pPlay->get() == 0.0) { QThread::msleep(16); continue; }
-
-        double audioTimeMs = m_pPlayPosition->get() * durationMs;
-
-        if (lastTargetAudioTimeMs < 0 || std::abs(audioTimeMs - lastTargetAudioTimeMs) > 1000.0) {
-            int64_t targetTimestamp = static_cast<int64_t>((audioTimeMs / 1000.0) / av_q2d(formatCtx->streams[videoStreamIndex]->time_base));
-            avcodec_flush_buffers(codecCtx);
-            avformat_seek_file(formatCtx, videoStreamIndex, INT64_MIN, targetTimestamp, targetTimestamp, AVSEEK_FLAG_BACKWARD);
-            lastTargetAudioTimeMs = audioTimeMs;
+            QMutexLocker lock(&m_mutex);
+            if (m_abort) break;
         }
 
-        if (av_read_frame(formatCtx, packet) < 0) { QThread::msleep(10); continue; }
-        if (packet->stream_index != videoStreamIndex) { av_packet_unref(packet); continue; }
-        if (avcodec_send_packet(codecCtx, packet) < 0) { av_packet_unref(packet); continue; }
-        av_packet_unref(packet);
+        // A. DYNAMIC LIVE MIXER FADER REGULATION
+        double channelVol = m_pVolume ? m_pVolume->get() : 1.0;
+        double crossfaderPos = m_pCrossfader ? m_pCrossfader->get() : 0.0;
+        double crossfaderMultiplier = 1.0;
 
-        while (avcodec_receive_frame(codecCtx, frame) == 0) {
-            double frameTimeMs = 0;
-            if (frame->best_effort_timestamp != AV_NOPTS_VALUE) {
-                frameTimeMs = frame->best_effort_timestamp * av_q2d(formatCtx->streams[videoStreamIndex]->time_base) * 1000.0;
-            }
-            lastTargetAudioTimeMs = frameTimeMs;
+        if (m_group == "[Channel1]") {
+            crossfaderMultiplier = (crossfaderPos <= 0.0) ? 1.0 : (1.0 - crossfaderPos);
+        } else if (m_group == "[Channel2]") {
+            crossfaderMultiplier = (crossfaderPos >= 0.0) ? 1.0 : (1.0 + crossfaderPos);
+        }
 
-            if (frameTimeMs > audioTimeMs + 30.0) {
-                QThread::msleep(8); av_frame_unref(frame); break; 
-            } else if (frameTimeMs < audioTimeMs - 50.0) {
-                av_frame_unref(frame); QThread::msleep(2); continue; 
-            }
+        m_calculatedOpacity = channelVol * crossfaderMultiplier;
 
-            // Write directly to shared buffer with mutex protection
-            {
-                QMutexLocker locker(&m_bufferMutex);
-                if (m_pixelData && swsCtx) {
-                    uint8_t* dstData[4] = {m_pixelData, nullptr, nullptr, nullptr};
-                    int dstLinesize[4] = {m_width * 4, 0, 0, 0};
-                    sws_scale(swsCtx, frame->data, frame->linesize, 0, m_height, dstData, dstLinesize);
+        // Optimization: If faders mean this channel is hidden, completely idle processing
+        if (m_calculatedOpacity <= 0.001) {
+            msleep(15); 
+            continue; 
+        }
+
+        // B. TIME-BASED DECODER THROTTLING CONTROLS (Prevents 100% CPU lockup slideshow)
+        if (m_pPlayPosition && m_pPlay) {
+            bool isPlaying = m_pPlay->get() > 0.0;
+            if (isPlaying && frame->pts != AV_NOPTS_VALUE) {
+                double currentFrameTime = frame->pts * av_q2d(formatCtx->streams[videoStreamIdx]->time_base);
+                double currentAudioTime = m_pPlayPosition->get() * totalDurationSeconds;
+
+                // If decoder is getting ahead of the playing track audio clock, force a light sleep window
+                if (currentFrameTime > currentAudioTime + 0.03) {
+                    int delayMs = static_cast<int>((currentFrameTime - currentAudioTime) * 1000);
+                    if (delayMs > 0) {
+                        msleep(qMin(delayMs, 25)); // Cap sleep intervals to preserve scratch tracking response
+                    }
                 }
             }
-            emit frameReady();
-            av_frame_unref(frame);
+        }
+
+        // C. PACKET FETCHING AND DECODING LAYER
+        if (av_read_frame(formatCtx, packet) >= 0) {
+            if (packet->stream_index == videoStreamIdx) {
+                if (avcodec_send_packet(codecCtx, packet) >= 0) {
+                    while (avcodec_receive_frame(codecCtx, frame) >= 0) {
+                        
+                        // D. ALLOCATE OR RESIZE DYNAMIC HARDWARE BUFFERS
+                        {
+                            QMutexLocker bufferLock(&m_bufferMutex);
+                            if (m_width != codecCtx->width || m_height != codecCtx->height) {
+                                m_width = codecCtx->width;
+                                m_height = codecCtx->height;
+                                delete[] m_pixelData;
+                                m_pixelData = new uchar[m_width * m_height * 4];
+                            }
+                        }
+
+                        // E. ZERO-COPY COLOR CONVERSION & ATOMIC COUNTER INCREMENTATION
+                        {
+                            QMutexLocker bufferLock(&m_bufferMutex);
+                            QImage targetImage(m_pixelData, m_width, m_height, QImage::Format_RGB32);
+                            
+                            if (scaleFrameToImage(swsCtx, frame, targetImage, m_width, m_height)) {
+                                m_frameCounter++; // <--- INCREMENT HERE: Signifies brand new pixel array data is ready
+                            }
+                        }
+
+                        // F. LIGHTWEIGHT 0-BYTE SIGNAL TIMING PING
+                        emit frameReady();
+                    }
+                }
+            }
+            av_packet_unref(packet);
+        } else {
+            // End of video reached or stream looping point trigger handling block
+            if (m_pPlayPosition && m_pPlayPosition->get() < 0.01) {
+                av_seek_frame(formatCtx, videoStreamIdx, 0, AVSEEK_FLAG_BACKWARD);
+                avcodec_flush_buffers(codecCtx);
+            }
+            msleep(10);
         }
     }
 
-    if (swsCtx) sws_freeContext(swsCtx);
+    // 3. PIPELINE MEMORY TEARDOWN CLEANUP DESTRUCTION
     av_packet_free(&packet);
     av_frame_free(&frame);
+    sws_freeContext(swsCtx);
     avcodec_free_context(&codecCtx);
     avformat_close_input(&formatCtx);
 }
