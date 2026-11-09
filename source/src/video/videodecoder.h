@@ -10,6 +10,7 @@ class VideoDecoder : public QThread {
 public:
     explicit VideoDecoder(const QString& group, QObject* parent = nullptr); 
     ~VideoDecoder() override;
+uint64_t getFrameCounter() const { return m_frameCounter; }
 
     void openFile(const QString& path);
     void close();
