@@ -6,9 +6,8 @@
 #include <QString>
 #include "video/videodecoder.h"
 
-// Forward declare Track class and its smart pointer representation
-class Track;
-typedef QSharedPointer<Track> TrackPointer;
+// Pull Mixxx's official global track definitions and type declarations
+#include "track/track_decl.h"
 
 class VideoWidget : public QWidget {
     Q_OBJECT
@@ -21,7 +20,7 @@ public:
 public slots:
     void slotFrameReady(); 
     
-    // Explicit inline match mapping track locations to the player backend
+    // Mixxx's legacy skin parser will now link this seamlessly to the track payload
     void slotLoadTrack(TrackPointer pTrack);
 
 protected:
