@@ -1,34 +1,72 @@
-#pragma once
+#include "video/videowidget.h"
+#include <QPainter>
+#include <QMutexLocker>
 
-#include <QWidget>
-#include <QImage>
-#include <QPaintEvent>
-#include <QString>
-#include "video/videodecoder.h"
-#include "track/track_decl.h"
+VideoWidget::VideoWidget(QWidget* parent, const SkinContext& context) 
+        : QWidget(parent) {
+    Q_UNUSED(context); 
+    setAttribute(Qt::WA_OpaquePaintEvent); 
+}
 
-// Forward declare the configurations/skin contexts Mixxx uses
-class QDomNode;
-class SkinContext;
+void VideoWidget::setDecoder(VideoDecoder* decoder) {
+    m_pDecoder = decoder;
+    if (m_pDecoder) {
+        connect(m_pDecoder, &VideoDecoder::frameReady, this, &VideoWidget::slotFrameReady, Qt::QueuedConnection);
+    }
+}
 
-class VideoWidget : public QWidget {
-    Q_OBJECT
-public:
-    // FIX: Expose a flexible constructor signature that accepts both a parent and skin parser configuration nodes
-    VideoWidget(QWidget* parent, const SkinContext& context);
-    ~VideoWidget() override = default;
+void VideoWidget::slotFrameReady() {
+    if (!m_pDecoder) return;
 
-    void setDecoder(VideoDecoder* decoder);
+    uint64_t currentFrameCount = m_pDecoder->getFrameCounter();
+    if (currentFrameCount == m_lastRenderedFrame) {
+        return; 
+    }
 
-public slots:
-    void slotFrameReady(); 
-    void slotLoadTrack(TrackPointer pTrack);
+    QMutex* decoderMutex = m_pDecoder->getBufferMutex();
+    int width = m_pDecoder->getImageWidth();
+    int height = m_pDecoder->getImageHeight();
+    uchar* rawPixels = m_pDecoder->getPixelData();
 
-protected:
-    void paintEvent(QPaintEvent* event) override;
+    if (!rawPixels || width <= 0 || height <= 0) return;
 
-private:
-    VideoDecoder* m_pDecoder{nullptr};
-    QImage m_uiFrame;                 
-    uint64_t m_lastRenderedFrame{0};  
-};
+    {
+        QMutexLocker lock(decoderMutex);
+        QImage sharedWrapper(rawPixels, width, height, QImage::Format_RGB32);
+        m_uiFrame = sharedWrapper.copy(); 
+        m_lastRenderedFrame = currentFrameCount; 
+    }
+
+    update(); 
+}
+
+void VideoWidget::paintEvent(QPaintEvent* event) {
+    QPainter painter(this);
+    
+    if (m_uiFrame.isNull()) {
+        painter.fillRect(rect(), Qt::black); 
+        return;
+    }
+
+    QSize frameSize = m_uiFrame.size();
+    QRect targetRect = rect();
+    QSize scaledSize = frameSize.scaled(targetRect.size(), Qt::KeepAspectRatio);
+    
+    int x = (targetRect.width() - scaledSize.width()) / 2;
+    int y = (targetRect.height() - scaledSize.height()) / 2;
+    QRect centeredLayoutRect(x, y, scaledSize.width(), scaledSize.height());
+
+    double opacity = m_pDecoder ? m_pDecoder->getCalculatedOpacity() : 1.0;
+    painter.setOpacity(opacity);
+
+    painter.drawImage(centeredLayoutRect, m_uiFrame);
+}
+
+void VideoWidget::slotLoadTrack(TrackPointer pTrack) {
+    if (m_pDecoder && pTrack) {
+        m_pDecoder->openFile(pTrack->getLocation());
+    }
+}
+
+// === CRITICAL FIX FOR THE AUTOMOC COMPILER ERROR ===
+#include "videowidget.moc"
