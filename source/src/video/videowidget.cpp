@@ -1,61 +1,34 @@
-#include "video/videowidget.h"
-#include <QPainter>
-#include <QMutexLocker>
+#pragma once
 
-VideoWidget::VideoWidget(QWidget* parent) : QWidget(parent) {
-    setAttribute(Qt::WA_OpaquePaintEvent); 
-}
+#include <QWidget>
+#include <QImage>
+#include <QPaintEvent>
+#include <QString>
+#include "video/videodecoder.h"
 
-void VideoWidget::setDecoder(VideoDecoder* decoder) {
-    m_pDecoder = decoder;
-    if (m_pDecoder) {
-        connect(m_pDecoder, &VideoDecoder::frameReady, this, &VideoWidget::slotFrameReady, Qt::QueuedConnection);
-    }
-}
+// Forward declare Track class and its smart pointer representation
+class Track;
+typedef QSharedPointer<Track> TrackPointer;
 
-void VideoWidget::slotFrameReady() {
-    if (!m_pDecoder) return;
+class VideoWidget : public QWidget {
+    Q_OBJECT
+public:
+    explicit VideoWidget(QWidget* parent = nullptr);
+    ~VideoWidget() override = default;
 
-    QMutex* decoderMutex = m_pDecoder->getBufferMutex();
-    int width = m_pDecoder->getImageWidth();
-    int height = m_pDecoder->getImageHeight();
-    uchar* rawPixels = m_pDecoder->getPixelData();
+    void setDecoder(VideoDecoder* decoder);
 
-    if (!rawPixels || width <= 0 || height <= 0) return;
-
-    uint64_t currentFrameCount = m_pDecoder->getFrameCounter();
-    if (currentFrameCount == m_lastRenderedFrame) {
-        return; 
-    }
-
-    {
-        QMutexLocker lock(decoderMutex);
-        QImage sharedWrapper(rawPixels, width, height, QImage::Format_RGB32);
-        m_uiFrame = sharedWrapper.copy(); 
-        m_lastRenderedFrame = currentFrameCount;
-    }
-
-    update(); 
-}
-
-void VideoWidget::paintEvent(QPaintEvent* event) {
-    QPainter painter(this);
+public slots:
+    void slotFrameReady(); 
     
-    if (m_uiFrame.isNull()) {
-        painter.fillRect(rect(), Qt::black); 
-        return;
-    }
+    // Explicit inline match mapping track locations to the player backend
+    void slotLoadTrack(TrackPointer pTrack);
 
-    QSize frameSize = m_uiFrame.size();
-    QRect targetRect = rect();
-    QSize scaledSize = frameSize.scaled(targetRect.size(), Qt::KeepAspectRatio);
-    
-    int x = (targetRect.width() - scaledSize.width()) / 2;
-    int y = (targetRect.height() - scaledSize.height()) / 2;
-    QRect centeredLayoutRect(x, y, scaledSize.width(), scaledSize.height());
+protected:
+    void paintEvent(QPaintEvent* event) override;
 
-    double opacity = m_pDecoder ? m_pDecoder->getCalculatedOpacity() : 1.0;
-    painter.setOpacity(opacity);
-
-    painter.drawImage(centeredLayoutRect, m_uiFrame);
-}
+private:
+    VideoDecoder* m_pDecoder{nullptr};
+    QImage m_uiFrame;                 
+    uint64_t m_lastRenderedFrame{0};  
+};
