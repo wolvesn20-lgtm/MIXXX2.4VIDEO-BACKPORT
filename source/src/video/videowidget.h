@@ -5,22 +5,23 @@
 #include <QPaintEvent>
 #include <QString>
 #include "video/videodecoder.h"
-
-// Pull Mixxx's official global track definitions and type declarations
 #include "track/track_decl.h"
+
+// Forward declare the configurations/skin contexts Mixxx uses
+class QDomNode;
+class SkinContext;
 
 class VideoWidget : public QWidget {
     Q_OBJECT
 public:
-    explicit VideoWidget(QWidget* parent = nullptr);
+    // FIX: Expose a flexible constructor signature that accepts both a parent and skin parser configuration nodes
+    VideoWidget(QWidget* parent, const SkinContext& context);
     ~VideoWidget() override = default;
 
     void setDecoder(VideoDecoder* decoder);
 
 public slots:
     void slotFrameReady(); 
-    
-    // Mixxx's legacy skin parser will now link this seamlessly to the track payload
     void slotLoadTrack(TrackPointer pTrack);
 
 protected:
