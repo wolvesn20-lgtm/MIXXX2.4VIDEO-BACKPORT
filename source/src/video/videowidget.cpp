@@ -2,8 +2,9 @@
 #include <QPainter>
 #include <QMutexLocker>
 
-VideoWidget::VideoWidget(QWidget* parent, const SkinContext& context) 
-        : QWidget(parent) {
+// FIX: Direct the initialization lists to capture the parsed values correctly
+VideoWidget::VideoWidget(const QString& group, const SkinContext& context) 
+        : QWidget(nullptr), m_group(group) {
     Q_UNUSED(context); 
     setAttribute(Qt::WA_OpaquePaintEvent); 
 }
@@ -68,5 +69,5 @@ void VideoWidget::slotLoadTrack(TrackPointer pTrack) {
     }
 }
 
-// === CRITICAL FIX FOR THE AUTOMOC COMPILER ERROR ===
+// Ensure the automated moc layout compilation links the changes smoothly
 #include "videowidget.moc"
