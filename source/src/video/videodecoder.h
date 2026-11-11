@@ -6,6 +6,9 @@
 #include <QString>
 #include "control/controlproxy.h"
 
+struct SwsContext;
+struct AVFrame;
+
 class VideoDecoder : public QThread {
     Q_OBJECT
 public:
@@ -31,6 +34,8 @@ protected:
     void run() override;
 
 private:
+    bool scaleFrameToImage(SwsContext* swsCtx, AVFrame* frame, QImage& targetImage, int width, int height);
+
     QString m_path;
     QMutex m_mutex;
     QMutex m_bufferMutex; // Protects the shared pixel buffer
@@ -46,5 +51,5 @@ private:
     int m_width{0};
     int m_height{0};
     double m_calculatedOpacity{1.0};       // Live channel opacity value
-    uint64_t m_frameCounter{0};            // <--- FIX: Added the missing variable here!
+    uint64_t m_frameCounter{0};
 };
