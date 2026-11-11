@@ -59,8 +59,7 @@ void VideoDecoder::close() {
         terminate();
         wait(1000);
     }
-}
-static bool scaleFrameToImage(SwsContext* swsCtx, AVFrame* frame, QImage& targetImage, int width, int height) {
+bool VideoDecoder::scaleFrameToImage(SwsContext* swsCtx, AVFrame* frame, QImage& targetImage, int width, int height) {
     if (!swsCtx || !frame || width <= 0 || height <= 0) {
         return false;
     }
