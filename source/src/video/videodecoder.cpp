@@ -1,12 +1,12 @@
 #include "video/videodecoder.h"
 #include "video/ffmpeg_compat.h"
 
+#include <QDebug>
 #include <QFileInfo>
 #include <QMutexLocker>
-#include <QDebug>
 
-#include <cstring>
 #include <cmath>
+#include <cstring>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -15,15 +15,23 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-#include "control/controlproxy.h"
 #include "control/control.h"
+#include "control/controlproxy.h"
 
 VideoDecoder::VideoDecoder(const QString& group, QObject* parent)
-        : QThread(parent), m_group(group), m_path(""), m_abort(false) {
+        : QThread(parent),
+          m_path(""),
+          m_abort(false),
+          m_group(group) {
     ConfigKey positionKey(m_group, "playposition");
     ConfigKey playKey(m_group, "play");
+    ConfigKey volumeKey(m_group, "volume");
+    ConfigKey crossfaderKey("[Master]", "crossfader");
+
     m_pPlayPosition = new ControlProxy(positionKey, this);
     m_pPlay = new ControlProxy(playKey, this);
+    m_pVolume = new ControlProxy(volumeKey, this);
+    m_pCrossfader = new ControlProxy(crossfaderKey, this);
 }
 
 VideoDecoder::~VideoDecoder() {
@@ -37,7 +45,9 @@ VideoDecoder::~VideoDecoder() {
     }
     delete m_pPlayPosition;
     delete m_pPlay;
-    if (m_pixelData) delete[] m_pixelData;
+    delete m_pVolume;
+    delete m_pCrossfader;
+    delete[] m_pixelData;
 }
 
 void VideoDecoder::openFile(const QString& path) {
@@ -46,8 +56,12 @@ void VideoDecoder::openFile(const QString& path) {
         m_path = path;
         m_abort = false;
     }
-    if (path.isEmpty() || !QFileInfo::exists(path)) return;
-    if (!isRunning()) start();
+    if (path.isEmpty() || !QFileInfo::exists(path)) {
+        return;
+    }
+    if (!isRunning()) {
+        start();
+    }
 }
 
 void VideoDecoder::close() {
@@ -59,36 +73,50 @@ void VideoDecoder::close() {
         terminate();
         wait(1000);
     }
-bool VideoDecoder::scaleFrameToImage(SwsContext* swsCtx, AVFrame* frame, QImage& targetImage, int width, int height) {
+}
+
+bool VideoDecoder::scaleFrameToImage(
+        SwsContext* swsCtx,
+        AVFrame* frame,
+        QImage& targetImage,
+        int width,
+        int height) {
     if (!swsCtx || !frame || width <= 0 || height <= 0) {
         return false;
     }
 
-    if (targetImage.isNull() || targetImage.width() != width || targetImage.height() != height ||
-        targetImage.format() != QImage::Format_RGB32) {
+    if (targetImage.isNull() ||
+            targetImage.width() != width ||
+            targetImage.height() != height ||
+            targetImage.format() != QImage::Format_RGB32) {
         targetImage = QImage(width, height, QImage::Format_RGB32);
     }
 
-    uint8_t* destData[4] = { targetImage.bits(), nullptr, nullptr, nullptr };
-    int destLinesize[4] = { static_cast<int>(targetImage.bytesPerLine()), 0, 0, 0 };
+    uint8_t* destData[4] = {targetImage.bits(), nullptr, nullptr, nullptr};
+    int destLinesize[4] = {static_cast<int>(targetImage.bytesPerLine()), 0, 0, 0};
 
     int scaledHeight = sws_scale(
-        swsCtx,
-        frame->data,
-        frame->linesize,
-        0,
-        frame->height,
-        destData,
-        destLinesize
-    );
+            swsCtx,
+            frame->data,
+            frame->linesize,
+            0,
+            frame->height,
+            destData,
+            destLinesize);
 
     return scaledHeight > 0;
 }
 
 void VideoDecoder::run() {
+    QString currentPath;
+    {
+        QMutexLocker lock(&m_mutex);
+        currentPath = m_path;
+    }
+
     // 1. FFMPEG ARCHITECTURE INITIALIZATION
     AVFormatContext* formatCtx = avformat_alloc_context();
-    if (avformat_open_input(&formatCtx, m_path.toUtf8().constData(), nullptr, nullptr) < 0) {
+    if (avformat_open_input(&formatCtx, currentPath.toUtf8().constData(), nullptr, nullptr) < 0) {
         emit openFailed("Could not open video file container format.");
         return;
     }
@@ -102,19 +130,25 @@ void VideoDecoder::run() {
     int videoStreamIdx = -1;
     for (unsigned int i = 0; i < formatCtx->nb_streams; i++) {
         if (formatCtx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-            videoStreamIdx = i;
+            videoStreamIdx = static_cast<int>(i);
             break;
         }
     }
 
     if (videoStreamIdx == -1) {
-        emit openFailed("No valid video stream track track found in file.");
+        emit openFailed("No valid video stream track found in file.");
         avformat_close_input(&formatCtx);
         return;
     }
 
     AVCodecParameters* codecPar = formatCtx->streams[videoStreamIdx]->codecpar;
     const AVCodec* codec = avcodec_find_decoder(codecPar->codec_id);
+    if (!codec) {
+        emit openFailed("Could not find matching video decoder.");
+        avformat_close_input(&formatCtx);
+        return;
+    }
+
     AVCodecContext* codecCtx = avcodec_alloc_context3(codec);
     avcodec_parameters_to_context(codecCtx, codecPar);
 
@@ -125,20 +159,33 @@ void VideoDecoder::run() {
         return;
     }
 
-    // Initialize software scaler mapping YUV planes to local RGB32 memory space cleanly
+    // Initialize software scaler mapping YUV planes to local RGB32 memory space
     SwsContext* swsCtx = sws_getContext(
-        codecCtx->width, codecCtx->height, codecCtx->pix_fmt,
-        codecCtx->width, codecCtx->height, AV_PIX_FMT_RGB32,
-        SWS_BILINEAR, nullptr, nullptr, nullptr
-    );
+            codecCtx->width,
+            codecCtx->height,
+            codecCtx->pix_fmt,
+            codecCtx->width,
+            codecCtx->height,
+            AV_PIX_FMT_RGB32,
+            SWS_BILINEAR,
+            nullptr,
+            nullptr,
+            nullptr);
+
+    if (!swsCtx) {
+        emit openFailed("Could not initialize software video scaler.");
+        avcodec_free_context(&codecCtx);
+        avformat_close_input(&formatCtx);
+        return;
+    }
 
     AVPacket* packet = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
 
-    // Track total length metrics if metadata stream exists safely
+    // Track total length metrics if metadata stream exists
     double totalDurationSeconds = 0.0;
     if (formatCtx->streams[videoStreamIdx]->duration != AV_NOPTS_VALUE) {
-        totalDurationSeconds = formatCtx->streams[videoStreamIdx]->duration * 
+        totalDurationSeconds = formatCtx->streams[videoStreamIdx]->duration *
                                av_q2d(formatCtx->streams[videoStreamIdx]->time_base);
     } else if (formatCtx->duration != AV_NOPTS_VALUE) {
         totalDurationSeconds = static_cast<double>(formatCtx->duration) / AV_TIME_BASE;
@@ -148,7 +195,9 @@ void VideoDecoder::run() {
     while (true) {
         {
             QMutexLocker lock(&m_mutex);
-            if (m_abort) break;
+            if (m_abort) {
+                break;
+            }
         }
 
         // A. DYNAMIC LIVE MIXER FADER REGULATION
@@ -164,24 +213,23 @@ void VideoDecoder::run() {
 
         m_calculatedOpacity = channelVol * crossfaderMultiplier;
 
-        // Optimization: If faders mean this channel is hidden, completely idle processing
+        // Optimization: If faders mean this channel is hidden, idle processing
         if (m_calculatedOpacity <= 0.001) {
-            msleep(15); 
-            continue; 
+            msleep(15);
+            continue;
         }
 
-        // B. TIME-BASED DECODER THROTTLING CONTROLS (Prevents 100% CPU lockup slideshow)
+        // B. TIME-BASED DECODER THROTTLING CONTROLS
         if (m_pPlayPosition && m_pPlay) {
             bool isPlaying = m_pPlay->get() > 0.0;
-            if (isPlaying && frame->pts != AV_NOPTS_VALUE) {
+            if (isPlaying && frame->pts != AV_NOPTS_VALUE && totalDurationSeconds > 0.0) {
                 double currentFrameTime = frame->pts * av_q2d(formatCtx->streams[videoStreamIdx]->time_base);
                 double currentAudioTime = m_pPlayPosition->get() * totalDurationSeconds;
 
-                // If decoder is getting ahead of the playing track audio clock, force a light sleep window
                 if (currentFrameTime > currentAudioTime + 0.03) {
                     int delayMs = static_cast<int>((currentFrameTime - currentAudioTime) * 1000);
                     if (delayMs > 0) {
-                        msleep(qMin(delayMs, 25)); // Cap sleep intervals to preserve scratch tracking response
+                        msleep(qMin(delayMs, 25));
                     }
                 }
             }
@@ -192,7 +240,6 @@ void VideoDecoder::run() {
             if (packet->stream_index == videoStreamIdx) {
                 if (avcodec_send_packet(codecCtx, packet) >= 0) {
                     while (avcodec_receive_frame(codecCtx, frame) >= 0) {
-                        
                         // D. ALLOCATE OR RESIZE DYNAMIC HARDWARE BUFFERS
                         {
                             QMutexLocker bufferLock(&m_bufferMutex);
@@ -207,10 +254,15 @@ void VideoDecoder::run() {
                         // E. ZERO-COPY COLOR CONVERSION & ATOMIC COUNTER INCREMENTATION
                         {
                             QMutexLocker bufferLock(&m_bufferMutex);
-                            QImage targetImage(m_pixelData, m_width, m_height, QImage::Format_RGB32);
-                            
+                            QImage targetImage(
+                                    m_pixelData,
+                                    m_width,
+                                    m_height,
+                                    m_width * 4,
+                                    QImage::Format_RGB32);
+
                             if (scaleFrameToImage(swsCtx, frame, targetImage, m_width, m_height)) {
-                                m_frameCounter++; // <--- INCREMENT HERE: Signifies brand new pixel array data is ready
+                                m_frameCounter++;
                             }
                         }
 
@@ -221,18 +273,16 @@ void VideoDecoder::run() {
             }
             av_packet_unref(packet);
         } else {
-            // End of video reached or stream looping point trigger handling block
-            if (m_pPlayPosition && m_pPlayPosition->get() < 0.01) {
-                av_seek_frame(formatCtx, videoStreamIdx, 0, AVSEEK_FLAG_BACKWARD);
-                avcodec_flush_buffers(codecCtx);
-            }
+            // End of video reached: seek back to start so looping tracks keep video active
+            av_seek_frame(formatCtx, videoStreamIdx, 0, AVSEEK_FLAG_BACKWARD);
+            avcodec_flush_buffers(codecCtx);
             msleep(10);
         }
     }
 
-    // 3. PIPELINE MEMORY TEARDOWN CLEANUP DESTRUCTION
-    av_packet_free(&packet);
+    // 3. CLEANUP FFMPEG RESOURCES ON THREAD EXIT
     av_frame_free(&frame);
+    av_packet_free(&packet);
     sws_freeContext(swsCtx);
     avcodec_free_context(&codecCtx);
     avformat_close_input(&formatCtx);
