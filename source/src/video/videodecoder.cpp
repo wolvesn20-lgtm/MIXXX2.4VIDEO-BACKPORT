@@ -60,6 +60,31 @@ void VideoDecoder::close() {
         wait(1000);
     }
 }
+static bool scaleFrameToImage(SwsContext* swsCtx, AVFrame* frame, QImage& targetImage, int width, int height) {
+    if (!swsCtx || !frame || width <= 0 || height <= 0) {
+        return false;
+    }
+
+    if (targetImage.isNull() || targetImage.width() != width || targetImage.height() != height ||
+        targetImage.format() != QImage::Format_RGB32) {
+        targetImage = QImage(width, height, QImage::Format_RGB32);
+    }
+
+    uint8_t* destData[4] = { targetImage.bits(), nullptr, nullptr, nullptr };
+    int destLinesize[4] = { static_cast<int>(targetImage.bytesPerLine()), 0, 0, 0 };
+
+    int scaledHeight = sws_scale(
+        swsCtx,
+        frame->data,
+        frame->linesize,
+        0,
+        frame->height,
+        destData,
+        destLinesize
+    );
+
+    return scaledHeight > 0;
+}
 
 void VideoDecoder::run() {
     // 1. FFMPEG ARCHITECTURE INITIALIZATION
