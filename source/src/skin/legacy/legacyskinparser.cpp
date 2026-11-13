@@ -326,57 +326,10 @@ Qt::MouseButton LegacySkinParser::parseButtonState(const QDomNode& node,
 
 QWidget* LegacySkinParser::parseSkin(const QDomElement& skinDocument, QWidget* pParent) {
     // This enables file paths like 'skins:Deere/...'
-    QString group;
-    QDomElement groupElement = m_pContext->selectElement(node, "Group");
-    if (!groupElement.isNull()) {
-        group = m_pContext->nodeToString(groupElement).trimmed();
-    }
-    if (group.isEmpty()) {
-        QDomElement channelElement = m_pContext->selectElement(node, "Channel");
-        if (!channelElement.isNull()) {
-            QString channel = m_pContext->nodeToString(channelElement).trimmed();
-            if (!channel.isEmpty()) {
-                group = channel.startsWith("[") ? channel : QString("[Channel%1]").arg(channel);
-            }
-        }
-    }
-
-    VideoWidget* pVideoWidget = new VideoWidget(group, m_pParent);
-    VideoDecoder* pDecoder = new VideoDecoder(group, pVideoWidget);
-    pVideoWidget->setDecoder(pDecoder);
-
-    // 2. Apply <ObjectName>, <SizePolicy>, <MinimumSize>, <Size>, and <Pos>
-    commonWidgetSetup(node, pVideoWidget);
-
-    // Fallback: explicitly apply <MinimumSize> if layout sizing hasn't forced it
-    QDomElement minSizeElement = m_pContext->selectElement(node, "MinimumSize");
-    if (!minSizeElement.isNull()) {
-        QStringList minParts = m_pContext->nodeToString(minSizeElement).split(',');
-        if (minParts.size() == 2) {
-            pVideoWidget->setMinimumSize(
-                    minParts[0].trimmed().toInt(),
-                    minParts[1].trimmed().toInt());
-        }
-    }
-
-    // 3. Connect deck track loading so loading a video file starts playback
-    if (m_pPlayerManager && !group.isEmpty()) {
-        BaseTrackPlayer* pPlayer = m_pPlayerManager->getPlayer(group);
-        if (pPlayer) {
-            connect(pPlayer,
-                    &BaseTrackPlayer::newTrackLoaded,
-                    pVideoWidget,
-                    &VideoWidget::slotLoadTrack);
-            if (pPlayer->getLoadedTrack()) {
-                pVideoWidget->slotLoadTrack(pPlayer->getLoadedTrack());
-            }
-        }
-    }
-
-    pVideoWidget->show();
-    return pVideoWidget;
-}
-
+QWidget* LegacySkinParser::parseSkin(
+        const QDomElement& skinDocument,
+        QWidget* pParent,
+        bool bResetToDefault) {
     // This enables file paths like 'skins:Deere/some_template.xml',
     // in addition to relative paths like 'skins:Deere/some_template.xml'
     // Note: Here we assume this path exists. If it doesn't SkinLoader::getSkinSearchPaths()
