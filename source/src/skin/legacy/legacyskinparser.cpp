@@ -324,79 +324,58 @@ Qt::MouseButton LegacySkinParser::parseButtonState(const QDomNode& node,
     return Qt::NoButton;
 }
 
-QWidget* LegacySkinParser::parseSkin(const QString& skinPath, QWidget* pParent) {
-    ScopedTimer timer("SkinLoader::parseSkin");
-    qDebug() << "LegacySkinParser loading skin:" << skinPath;
-
-    m_pContext = std::make_unique<SkinContext>(m_pConfig, skinPath + "/skin.xml");
-    m_pContext->setSkinBasePath(skinPath);
-
-    if (m_pParent) {
-        qDebug() << "ERROR: Somehow a parent already exists -- you are probably re-using a LegacySkinParser which is not advisable!";
+QWidget* LegacySkinParser::parseVideoWidget(const QDomElement& node) {
+    // 1. Explicitly extract <Group>[Channel1]</Group> or <Channel>1</Channel>
+    QString group;
+    QDomElement groupElement = m_pContext->selectElement(node, "Group");
+    if (!groupElement.isNull()) {
+        group = m_pContext->nodeToString(groupElement).trimmed();
     }
-    QDomElement skinDocument = openSkin(skinPath);
-
-    if (skinDocument.isNull()) {
-        qDebug() << "LegacySkinParser::parseSkin - failed for skin:" << skinPath;
-        return nullptr;
-    }
-
-    SkinManifest manifest = getSkinManifest(skinDocument);
-
-    // Apply SkinManifest attributes by looping through the proto.
-    for (int i = 0; i < manifest.attribute_size(); ++i) {
-        const SkinManifest::Attribute& attribute = manifest.attribute(i);
-        if (!attribute.has_config_key()) {
-            continue;
-        }
-
-        bool ok = false;
-        double value = QString::fromStdString(attribute.value()).toDouble(&ok);
-        if (!ok) {
-            SKIN_WARNING(skinDocument,
-                    *m_pContext,
-                    QStringLiteral("Failed reading double value from skin attribute: %1")
-                            .arg(QString::fromStdString(attribute.value())));
-            continue;
-        }
-
-        ConfigKey configKey = ConfigKey::parseCommaSeparated(
-            QString::fromStdString(attribute.config_key()));
-        // Set the specified attribute, possibly creating the control
-        // object in the process.
-        bool created = false;
-        // If there is no existing value for this CO in the skin,
-        // update the config with the specified value. If the attribute
-        // is set to persist, the value will be read when the control is created.
-        // TODO: This is a hack, but right now it's the cleanest way to
-        // get a CO with a specified initial value.  We should have a better
-        // mechanism to provide initial default values for COs.
-        if (attribute.persist() &&
-            m_pConfig->getValueString(configKey).isEmpty()) {
-            m_pConfig->set(configKey, ConfigValue(QString::number(value)));
-        }
-        ControlObject* pControl = controlFromConfigKey(configKey,
-                                                       attribute.persist(),
-                                                       &created);
-        if (pControl == nullptr) {
-            continue;
-        }
-
-        if (created) {
-            if (!attribute.persist()) {
-                // Only set the value if the control wasn't set up through
-                // the persist logic.  Skin attributes are always
-                // set on skin load.
-                pControl->set(value);
-            }
-        } else {
-            if (!attribute.persist()) {
-                // Set the value using the static function, so the
-                // value changes signal is transmitted to the owner.
-                ControlObject::set(configKey, value);
+    if (group.isEmpty()) {
+        QDomElement channelElement = m_pContext->selectElement(node, "Channel");
+        if (!channelElement.isNull()) {
+            QString channel = m_pContext->nodeToString(channelElement).trimmed();
+            if (!channel.isEmpty()) {
+                group = channel.startsWith("[") ? channel : QString("[Channel%1]").arg(channel);
             }
         }
     }
+
+    VideoWidget* pVideoWidget = new VideoWidget(group, m_pParent);
+    VideoDecoder* pDecoder = new VideoDecoder(group, pVideoWidget);
+    pVideoWidget->setDecoder(pDecoder);
+
+    // 2. Apply <ObjectName>, <SizePolicy>, <MinimumSize>, <Size>, and <Pos>
+    commonWidgetSetup(node, pVideoWidget);
+
+    // Fallback: explicitly apply <MinimumSize> if layout sizing hasn't forced it
+    QDomElement minSizeElement = m_pContext->selectElement(node, "MinimumSize");
+    if (!minSizeElement.isNull()) {
+        QStringList minParts = m_pContext->nodeToString(minSizeElement).split(',');
+        if (minParts.size() == 2) {
+            pVideoWidget->setMinimumSize(
+                    minParts[0].trimmed().toInt(),
+                    minParts[1].trimmed().toInt());
+        }
+    }
+
+    // 3. Connect deck track loading so loading a video file starts playback
+    if (m_pPlayerManager && !group.isEmpty()) {
+        BaseTrackPlayer* pPlayer = m_pPlayerManager->getPlayer(group);
+        if (pPlayer) {
+            connect(pPlayer,
+                    &BaseTrackPlayer::newTrackLoaded,
+                    pVideoWidget,
+                    &VideoWidget::slotLoadTrack);
+            if (pPlayer->getLoadedTrack()) {
+                pVideoWidget->slotLoadTrack(pPlayer->getLoadedTrack());
+            }
+        }
+    }
+
+    pVideoWidget->show();
+    return pVideoWidget;
+}
 
     // This enables file paths like 'skins:Deere/some_template.xml',
     // in addition to relative paths like 'skins:Deere/some_template.xml'
