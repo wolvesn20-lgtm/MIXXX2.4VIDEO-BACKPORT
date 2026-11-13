@@ -324,8 +324,8 @@ Qt::MouseButton LegacySkinParser::parseButtonState(const QDomNode& node,
     return Qt::NoButton;
 }
 
-QWidget* LegacySkinParser::parseVideoWidget(const QDomElement& node) {
-    // 1. Explicitly extract <Group>[Channel1]</Group> or <Channel>1</Channel>
+QWidget* LegacySkinParser::parseSkin(const QDomElement& skinDocument, QWidget* pParent) {
+    // This enables file paths like 'skins:Deere/...'
     QString group;
     QDomElement groupElement = m_pContext->selectElement(node, "Group");
     if (!groupElement.isNull()) {
