@@ -1056,43 +1056,64 @@ QWidget* LegacySkinParser::parseVisual(const QDomElement& node) {
 #endif
 }
 QWidget* LegacySkinParser::parseVideoWidget(const QDomElement& node) {
-    QString group = lookupNodeGroup(node);
-    
-    // 1. Attach it to the layout! (m_pParent)
-    auto* widget = new VideoWidget(group, m_pParent); 
-    
-    // 2. Remove the setWindowFlags and show() lines!
-    // The XML layout will handle the size and visibility.
-    
-    if (auto* player = m_pPlayerManager->getPlayer(group)) {
-        connect(player,
-                &BaseTrackPlayer::newTrackLoaded,
-                widget,
-                &VideoWidget::slotLoadTrack);
-        widget->slotLoadTrack(player->getLoadedTrack());
+    // 1. Extract <Group>[Channel1]</Group> or <Channel>1</Channel>
+    QString group;
+    QDomElement groupElement = m_pContext->selectElement(node, "Group");
+    if (!groupElement.isNull()) {
+        group = m_pContext->nodeToString(groupElement).trimmed();
     }
-    return widget;
-}
-
-QWidget* LegacySkinParser::parseText(const QDomElement& node) {
-    QString group = lookupNodeGroup(node);
     if (group.isEmpty()) {
-        // use WLabel, try to parse 'Text' node
-        return parseLabelWidget<WLabel>(node);
-    } else {
-        // use WTrackProperty to show a track tag / file name
-        return parseTrackProperty(node);
+        QDomElement channelElement = m_pContext->selectElement(node, "Channel");
+        if (!channelElement.isNull()) {
+            QString channel = m_pContext->nodeToString(channelElement).trimmed();
+            if (!channel.isEmpty()) {
+                group = channel.startsWith("[") ? channel : QString("[Channel%1]").arg(channel);
+            }
+        }
     }
+
+    VideoWidget* pVideoWidget = new VideoWidget(group, m_pParent);
+    VideoDecoder* pDecoder = new VideoDecoder(group, pVideoWidget);
+    pVideoWidget->setDecoder(pDecoder);
+
+    // 2. Apply <ObjectName>, <SizePolicy>, and <MinimumSize> directly on QWidget
+    QDomElement objNameEl = m_pContext->selectElement(node, "ObjectName");
+    if (!objNameEl.isNull()) {
+        pVideoWidget->setObjectName(m_pContext->nodeToString(objNameEl).trimmed());
+    }
+
+    QDomElement sizePolicyEl = m_pContext->selectElement(node, "SizePolicy");
+    if (!sizePolicyEl.isNull()) {
+        pVideoWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    }
+
+    QDomElement minSizeElement = m_pContext->selectElement(node, "MinimumSize");
+    if (!minSizeElement.isNull()) {
+        QStringList minParts = m_pContext->nodeToString(minSizeElement).split(',');
+        if (minParts.size() == 2) {
+            pVideoWidget->setMinimumSize(
+                    minParts[0].trimmed().toInt(),
+                    minParts[1].trimmed().toInt());
+        }
+    }
+
+    // 3. Connect deck track loading so dropping a video file starts playback
+    if (m_pPlayerManager && !group.isEmpty()) {
+        BaseTrackPlayer* pPlayer = m_pPlayerManager->getPlayer(group);
+        if (pPlayer) {
+            connect(pPlayer,
+                    &BaseTrackPlayer::newTrackLoaded,
+                    pVideoWidget,
+                    &VideoWidget::slotLoadTrack);
+            if (pPlayer->getLoadedTrack()) {
+                pVideoWidget->slotLoadTrack(pPlayer->getLoadedTrack());
+            }
+        }
+    }
+
+    pVideoWidget->show();
+    return pVideoWidget;
 }
-
-QWidget* LegacySkinParser::parseTrackProperty(const QDomElement& node) {
-    QString group = lookupNodeGroup(node);
-    BaseTrackPlayer* pPlayer = m_pPlayerManager->getPlayer(group);
-    if (!pPlayer) {
-        SKIN_WARNING(node, *m_pContext, QStringLiteral("No player found for group: %1").arg(group));
-        return nullptr;
-    }
-
     WTrackProperty* pTrackProperty = new WTrackProperty(
             m_pParent,
             m_pConfig,
