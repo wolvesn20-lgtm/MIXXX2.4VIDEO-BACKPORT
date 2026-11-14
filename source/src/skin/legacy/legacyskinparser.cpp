@@ -324,8 +324,6 @@ Qt::MouseButton LegacySkinParser::parseButtonState(const QDomNode& node,
     return Qt::NoButton;
 }
 
-QWidget* LegacySkinParser::parseSkin(const QDomElement& skinDocument, QWidget* pParent) {
-    // This enables file paths like 'skins:Deere/...'
 QWidget* LegacySkinParser::parseSkin(
         const QDomElement& skinDocument,
         QWidget* pParent,
