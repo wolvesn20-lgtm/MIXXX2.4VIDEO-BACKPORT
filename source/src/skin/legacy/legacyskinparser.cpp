@@ -324,10 +324,11 @@ Qt::MouseButton LegacySkinParser::parseButtonState(const QDomNode& node,
     return Qt::NoButton;
 }
 
-QWidget* LegacySkinParser::parseSkin(
-        const QDomElement& skinDocument,
-        QWidget* pParent,
-        bool bResetToDefault) {
+QWidget* LegacySkinParser::parseSkin(const QString& skinPath, QWidget* pParent) {
+    m_pContext = std::make_unique<SkinContext>(m_pConfig, skinPath + "/skin.xml");
+    m_pContext->setSkinBasePath(skinPath);
+    QDomElement skinDocument = openSkin(skinPath);
+
     // This enables file paths like 'skins:Deere/some_template.xml',
     // in addition to relative paths like 'skins:Deere/some_template.xml'
     // Note: Here we assume this path exists. If it doesn't SkinLoader::getSkinSearchPaths()
