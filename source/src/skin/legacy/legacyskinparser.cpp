@@ -1007,6 +1007,81 @@ QWidget* LegacySkinParser::parseVisual(const QDomElement& node) {
     return viewer;
 #endif
 }
+QWidget* LegacySkinParser::parseText(const QDomElement& node) {
+    WLabel* pLabel = new WLabel(m_pParent);
+    setupLabelWidget(node, pLabel);
+
+    QString text;
+    if (m_pContext->hasNodeSelectString(node, "Text", &text)) {
+        pLabel->setText(text);
+    }
+
+    return pLabel;
+}
+
+QWidget* LegacySkinParser::parseTrackProperty(const QDomElement& node) {
+    QString group;
+    if (!m_pContext->hasNodeSelectString(node, "Group", &group)) {
+        SKIN_WARNING(node,
+                *m_pContext,
+                QStringLiteral("No <Group> specified for TrackProperty!"));
+        return nullptr;
+    }
+
+    BaseTrackPlayer* pPlayer = m_pPlayerManager->getPlayer(group);
+    if (pPlayer == nullptr) {
+        SKIN_WARNING(node,
+                *m_pContext,
+                QStringLiteral("Invalid <Group> specified for TrackProperty: %1")
+                        .arg(group));
+        return nullptr;
+    }
+
+    WTrackProperty* pTrackProperty = new WTrackProperty(
+            m_pParent,
+            m_pConfig,
+            m_pLibrary,
+            group);
+    setupLabelWidget(node, pTrackProperty);
+
+    // Relay for the label's WTrackMenu (which is created only on demand):
+    // Emitted before/after deleting a track file via that menu
+    // IF that track is in the current view.
+    connect(pTrackProperty,
+            &WTrackProperty::saveCurrentViewState,
+            m_pLibrary,
+            &Library::slotSaveCurrentViewState,
+            Qt::DirectConnection);
+    connect(pTrackProperty,
+            &WTrackProperty::restoreCurrentViewState,
+            m_pLibrary,
+            &Library::slotRestoreCurrentViewState,
+            Qt::DirectConnection);
+
+    connect(pPlayer,
+            &BaseTrackPlayer::newTrackLoaded,
+            pTrackProperty,
+            &WTrackProperty::slotTrackLoaded);
+    connect(pPlayer,
+            &BaseTrackPlayer::loadingTrack,
+            pTrackProperty,
+            &WTrackProperty::slotLoadingTrack);
+    connect(pTrackProperty,
+            &WTrackProperty::trackDropped,
+            m_pPlayerManager,
+            &PlayerManager::slotLoadLocationToPlayerMaybePlay);
+    connect(pTrackProperty,
+            &WTrackProperty::cloneDeck,
+            m_pPlayerManager,
+            &PlayerManager::slotCloneDeck);
+
+    TrackPointer pTrack = pPlayer->getLoadedTrack();
+    if (pTrack) {
+        pTrackProperty->slotTrackLoaded(pTrack);
+    }
+
+    return pTrackProperty;
+}
 QWidget* LegacySkinParser::parseVideoWidget(const QDomElement& node) {
     // 1. Extract <Group>[Channel1]</Group> or <Channel>1</Channel>
     QString group;
