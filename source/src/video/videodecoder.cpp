@@ -278,3 +278,86 @@ void VideoDecoder::run() {
                                                       ? frame->best_effort_timestamp
                                                       : frame->pts;
                             double framePtsSec = (bestPts != AV_NOPTS_VALUE)
+            // 3. Handle Scratch / Cue Jump / Loop Seek (backward jump or >0.25s forward jump)
+            if (!needInitialFrame && lastDecodedPtsSec >= 0.0 &&
+                    (deltaSec < -0.04 || deltaSec > 0.25)) {
+                int64_t seekTarget = static_cast<int64_t>(targetAudioSec / av_q2d(timeBase));
+                av_seek_frame(formatCtx, videoStreamIdx, seekTarget, AVSEEK_FLAG_BACKWARD);
+                avcodec_flush_buffers(codecCtx);
+                lastDecodedPtsSec = -1.0;
+                needInitialFrame = true;
+            }
+
+            // 4. Pause & Frame-Pacing Gate (locks video speed 1:1 to audio clock)
+            if (!needInitialFrame) {
+                if (!isPlaying && std::fabs(deltaSec) < 0.02) {
+                    // Deck is paused and playhead hasn't scrubbed: hold current frame
+                    msleep(12);
+                    continue;
+                }
+                if (lastDecodedPtsSec >= 0.0 && lastDecodedPtsSec > targetAudioSec + 0.008) {
+                    // Video is ahead of audio clock: sleep until audio catches up
+                    int waitMs = static_cast<int>((lastDecodedPtsSec - targetAudioSec) * 1000.0);
+                    msleep(qBound(1, waitMs, 15));
+                    continue;
+                }
+            }
+
+            // 5. Decode next frame
+            int readRes = av_read_frame(formatCtx, packet);
+            if (readRes >= 0) {
+                if (packet->stream_index == videoStreamIdx) {
+                    if (avcodec_send_packet(codecCtx, packet) >= 0) {
+                        while (avcodec_receive_frame(codecCtx, frame) >= 0) {
+                            int64_t bestPts = (frame->best_effort_timestamp != AV_NOPTS_VALUE)
+                                                      ? frame->best_effort_timestamp
+                                                      : frame->pts;
+                            double framePtsSec = (bestPts != AV_NOPTS_VALUE)
+                                                         ? bestPts * av_q2d(timeBase)
+                                                         : targetAudioSec;
+
+                            // Skip fast-forwarding intermediate frames during a seek
+                            if (!needInitialFrame && framePtsSec < targetAudioSec - 0.04) {
+                                continue;
+                            }
+
+                            lastDecodedPtsSec = framePtsSec;
+                            needInitialFrame = false;
+
+                            {
+                                QMutexLocker bufferLock(&m_bufferMutex);
+                                scaleFrameToImage(
+                                        swsCtx,
+                                        frame,
+                                        m_sharedImage,
+                                        codecCtx->width,
+                                        codecCtx->height);
+                            }
+
+                            m_frameCounter++;
+                            if (!m_framePending.exchange(true)) {
+                                emit frameReady();
+                            }
+                            break;
+                        }
+                    }
+                }
+                av_packet_unref(packet);
+            } else {
+                // EOF reached: rewind cleanly if track is still playing
+                av_seek_frame(formatCtx, videoStreamIdx, 0, AVSEEK_FLAG_BACKWARD);
+                avcodec_flush_buffers(codecCtx);
+                lastDecodedPtsSec = -1.0;
+                msleep(10);
+            }
+        }
+
+        // Clean up current file resources before reloading next track or exiting
+        av_frame_free(&frame);
+        av_packet_free(&packet);
+        sws_freeContext(swsCtx);
+        avcodec_free_context(&codecCtx);
+        avformat_close_input(&formatCtx);
+    }
+}
+
