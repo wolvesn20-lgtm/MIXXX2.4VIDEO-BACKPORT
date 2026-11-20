@@ -1,68 +1,71 @@
 #include "video/videowidget.h"
 #include <QPainter>
-#include <QMutexLocker>
+#include <QTimer>
 
-// Passes the parent widget directly to QWidget and stores the group string
-VideoWidget::VideoWidget(const QString& group, QWidget* parent) 
+VideoWidget::VideoWidget(const QString& group, QWidget* parent)
         : QWidget(parent), m_group(group) {
-    setAttribute(Qt::WA_OpaquePaintEvent); 
+    setAttribute(Qt::WA_OpaquePaintEvent);
+
+    // Lightweight timer so fader/crossfader opacity changes stay smooth even when paused
+    QTimer* pFaderTimer = new QTimer(this);
+    connect(pFaderTimer, &QTimer::timeout, this, QOverload<>::of(&VideoWidget::update));
+    pFaderTimer->start(33); // ~30 Hz UI opacity refresh
 }
 
 void VideoWidget::setDecoder(VideoDecoder* decoder) {
     m_pDecoder = decoder;
     if (m_pDecoder) {
-        connect(m_pDecoder, &VideoDecoder::frameReady, this, &VideoWidget::slotFrameReady, Qt::QueuedConnection);
+        connect(m_pDecoder,
+                &VideoDecoder::frameReady,
+                this,
+                &VideoWidget::slotFrameReady,
+                Qt::QueuedConnection);
     }
 }
 
 void VideoWidget::slotFrameReady() {
-    if (!m_pDecoder) return;
-
-    uint64_t currentFrameCount = m_pDecoder->getFrameCounter();
-    if (currentFrameCount == m_lastRenderedFrame) {
-        return; 
+    if (!m_pDecoder) {
+        return;
     }
 
-    QMutex* decoderMutex = m_pDecoder->getBufferMutex();
-    int width = m_pDecoder->getImageWidth();
-    int height = m_pDecoder->getImageHeight();
-    uchar* rawPixels = m_pDecoder->getPixelData();
-
-    if (!rawPixels || width <= 0 || height <= 0) return;
-
-    {
-        QMutexLocker lock(decoderMutex);
-        QImage sharedWrapper(rawPixels, width, height, QImage::Format_RGB32);
-        m_uiFrame = sharedWrapper.copy(); 
-        m_lastRenderedFrame = currentFrameCount; 
+    if (m_pDecoder->copyLatestFrame(m_uiFrame, m_lastRenderedFrame)) {
+        update();
     }
-
-    update(); 
 }
 
 void VideoWidget::paintEvent(QPaintEvent* event) {
+    Q_UNUSED(event);
     QPainter painter(this);
-    
-    if (m_uiFrame.isNull()) {
-        painter.fillRect(rect(), Qt::black); 
+
+    // Always fill black first so lowering fader opacity fades cleanly to black
+    painter.fillRect(rect(), Qt::black);
+
+    if (m_uiFrame.isNull() || !m_pDecoder) {
+        return;
+    }
+
+    double opacity = m_pDecoder->getCalculatedOpacity();
+    if (opacity <= 0.001) {
         return;
     }
 
     QSize frameSize = m_uiFrame.size();
     QRect targetRect = rect();
     QSize scaledSize = frameSize.scaled(targetRect.size(), Qt::KeepAspectRatio);
-    
+
     int x = (targetRect.width() - scaledSize.width()) / 2;
     int y = (targetRect.height() - scaledSize.height()) / 2;
     QRect centeredLayoutRect(x, y, scaledSize.width(), scaledSize.height());
 
-    double opacity = m_pDecoder ? m_pDecoder->getCalculatedOpacity() : 1.0;
     painter.setOpacity(opacity);
-
     painter.drawImage(centeredLayoutRect, m_uiFrame);
 }
 
 void VideoWidget::slotLoadTrack(TrackPointer pTrack) {
+    m_uiFrame = QImage();
+    m_lastRenderedFrame = 0;
+    update();
+
     if (m_pDecoder && pTrack) {
         m_pDecoder->openFile(pTrack->getLocation());
     }
