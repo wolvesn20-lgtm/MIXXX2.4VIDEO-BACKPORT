@@ -273,11 +273,9 @@ void VideoDecoder::run() {
             if (readRes >= 0) {
                 if (packet->stream_index == videoStreamIdx) {
                     if (avcodec_send_packet(codecCtx, packet) >= 0) {
-                        while (avcodec_receive_frame(codecCtx, frame) >= 0) {
-                            int64_t bestPts = (frame->best_effort_timestamp != AV_NOPTS_VALUE)
-                                                      ? frame->best_effort_timestamp
-                                                      : frame->pts;
-                            double framePtsSec = (bestPts != AV_NOPTS_VALUE)
+                while (avcodec_receive_frame(codecCtx, frame) >= 0) {
+                            int64_t bestPts = (frame->best_effort_timestamp != AV_NOPTS_VALUE) ? frame->best_effort_timestamp : frame->pts;
+                            double framePtsSec = (bestPts != AV_NOPTS_VALUE) ? (bestPts * av_q2d(timeBase)) : targetAudioSec;
             // 3. Handle Scratch / Cue Jump / Loop Seek (backward jump or >0.25s forward jump)
             if (!needInitialFrame && lastDecodedPtsSec >= 0.0 &&
                     (deltaSec < -0.04 || deltaSec > 0.25)) {
