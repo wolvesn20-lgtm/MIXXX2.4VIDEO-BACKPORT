@@ -309,12 +309,8 @@ void VideoDecoder::run() {
                 if (packet->stream_index == videoStreamIdx) {
                     if (avcodec_send_packet(codecCtx, packet) >= 0) {
                         while (avcodec_receive_frame(codecCtx, frame) >= 0) {
-                            int64_t bestPts = (frame->best_effort_timestamp != AV_NOPTS_VALUE)
-                                                      ? frame->best_effort_timestamp
-                                                      : frame->pts;
-                            double framePtsSec = (bestPts != AV_NOPTS_VALUE)
-                                                         ? bestPts * av_q2d(timeBase)
-                                                         : targetAudioSec;
+                                                        int64_t bestPts = (frame->best_effort_timestamp != AV_NOPTS_VALUE) ? frame->best_effort_timestamp : frame->pts;
+                            double framePtsSec = (bestPts != AV_NOPTS_VALUE) ? (bestPts * av_q2d(timeBase)) : targetAudioSec;
 
                             // Skip fast-forwarding intermediate frames during a seek
                             if (!needInitialFrame && framePtsSec < targetAudioSec - 0.04) {
