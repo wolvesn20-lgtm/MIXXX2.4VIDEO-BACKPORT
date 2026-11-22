@@ -243,9 +243,10 @@ void VideoDecoder::run() {
 
             double deltaSec = targetAudioSec - lastDecodedPtsSec;
 
-            // 3. Handle Scratch / Cue Jump / Loop Seek (backward jump or >0.25s forward jump)
+                        // 3. Handle Scratch / Cue Jump / Loop Seek
+            // Only seek on backward jumps or large forward jumps (> 1.5s) to prevent keyframe seek loops
             if (!needInitialFrame && lastDecodedPtsSec >= 0.0 &&
-                    (deltaSec < -0.04 || deltaSec > 0.25)) {
+                    (deltaSec < -0.05 || deltaSec > 1.5)) {
                 int64_t seekTarget = static_cast<int64_t>(targetAudioSec / av_q2d(timeBase));
                 av_seek_frame(formatCtx, videoStreamIdx, seekTarget, AVSEEK_FLAG_BACKWARD);
                 avcodec_flush_buffers(codecCtx);
@@ -274,8 +275,44 @@ void VideoDecoder::run() {
                 if (packet->stream_index == videoStreamIdx) {
                     if (avcodec_send_packet(codecCtx, packet) >= 0) {
                         while (avcodec_receive_frame(codecCtx, frame) >= 0) {
-                                                        int64_t bestPts = (frame->best_effort_timestamp != AV_NOPTS_VALUE) ? frame->best_effort_timestamp : frame->pts;
+                            int64_t bestPts = (frame->best_effort_timestamp != AV_NOPTS_VALUE) ? frame->best_effort_timestamp : frame->pts;
                             double framePtsSec = (bestPts != AV_NOPTS_VALUE) ? (bestPts * av_q2d(timeBase)) : targetAudioSec;
+
+                            // Fast-forward through intermediate frames after a keyframe seek or slight lag
+                            if (framePtsSec < targetAudioSec - 0.04) {
+                                continue;
+                            }
+
+                            lastDecodedPtsSec = framePtsSec;
+                            needInitialFrame = false;
+
+                            {
+                                QMutexLocker bufferLock(&m_bufferMutex);
+                                scaleFrameToImage(
+                                        swsCtx,
+                                        frame,
+                                        m_sharedImage,
+                                        codecCtx->width,
+                                        codecCtx->height);
+                            }
+
+                            m_frameCounter++;
+                            if (!m_framePending.exchange(true)) {
+                                emit frameReady();
+                            }
+                            break;
+                        }
+                    }
+                }
+                av_packet_unref(packet);
+            } else {
+                // EOF reached: rewind cleanly if track is still playing
+                av_seek_frame(formatCtx, videoStreamIdx, 0, AVSEEK_FLAG_BACKWARD);
+                avcodec_flush_buffers(codecCtx);
+                lastDecodedPtsSec = -1.0;
+                needInitialFrame = true;
+                msleep(10);
+            }
 
                             // Skip fast-forwarding intermediate frames during a seek
                             if (!needInitialFrame && framePtsSec < targetAudioSec - 0.04) {
