@@ -269,14 +269,18 @@ void VideoDecoder::run() {
                 }
             }
 
-            // 5. Decode next frame
+                        // 5. Decode next frame
             int readRes = av_read_frame(formatCtx, packet);
             if (readRes >= 0) {
                 if (packet->stream_index == videoStreamIdx) {
                     if (avcodec_send_packet(codecCtx, packet) >= 0) {
                         while (avcodec_receive_frame(codecCtx, frame) >= 0) {
-                            int64_t bestPts = (frame->best_effort_timestamp != AV_NOPTS_VALUE) ? frame->best_effort_timestamp : frame->pts;
-                            double framePtsSec = (bestPts != AV_NOPTS_VALUE) ? (bestPts * av_q2d(timeBase)) : targetAudioSec;
+                            int64_t bestPts = (frame->best_effort_timestamp != AV_NOPTS_VALUE)
+                                                      ? frame->best_effort_timestamp
+                                                      : frame->pts;
+                            double framePtsSec = (bestPts != AV_NOPTS_VALUE)
+                                                         ? (bestPts * av_q2d(timeBase))
+                                                         : targetAudioSec;
 
                             // Fast-forward through intermediate frames after a keyframe seek or slight lag
                             if (framePtsSec < targetAudioSec - 0.04) {
@@ -306,6 +310,24 @@ void VideoDecoder::run() {
                 }
                 av_packet_unref(packet);
             } else {
+                // EOF reached: rewind cleanly if track is still playing
+                av_seek_frame(formatCtx, videoStreamIdx, 0, AVSEEK_FLAG_BACKWARD);
+                avcodec_flush_buffers(codecCtx);
+                lastDecodedPtsSec = -1.0;
+                needInitialFrame = true;
+                msleep(10);
+            }
+        }
+
+        // Clean up current file resources before reloading next track or exiting
+        av_frame_free(&frame);
+        av_packet_free(&packet);
+        sws_freeContext(swsCtx);
+        avcodec_free_context(&codecCtx);
+        avformat_close_input(&formatCtx);
+    }
+}
+
                 // EOF reached: rewind cleanly if track is still playing
                 av_seek_frame(formatCtx, videoStreamIdx, 0, AVSEEK_FLAG_BACKWARD);
                 avcodec_flush_buffers(codecCtx);
