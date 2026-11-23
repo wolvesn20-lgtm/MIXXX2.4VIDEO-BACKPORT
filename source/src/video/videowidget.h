@@ -37,3 +37,4 @@ class VideoWidget : public QWidget {
     uint64_t m_lastRenderedFrame{0};
     QString m_group;
 };
+
