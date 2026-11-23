@@ -304,7 +304,7 @@ void VideoDecoder::run() {
                             if (!m_framePending.exchange(true)) {
                                 emit frameReady();
                             }
-                            break;
+                                break;
                         }
                     }
                 }
@@ -327,57 +327,3 @@ void VideoDecoder::run() {
         avformat_close_input(&formatCtx);
     }
 }
-
-                // EOF reached: rewind cleanly if track is still playing
-                av_seek_frame(formatCtx, videoStreamIdx, 0, AVSEEK_FLAG_BACKWARD);
-                avcodec_flush_buffers(codecCtx);
-                lastDecodedPtsSec = -1.0;
-                needInitialFrame = true;
-                msleep(10);
-            }
-
-                            // Skip fast-forwarding intermediate frames during a seek
-                            if (!needInitialFrame && framePtsSec < targetAudioSec - 0.04) {
-                                continue;
-                            }
-
-                            lastDecodedPtsSec = framePtsSec;
-                            needInitialFrame = false;
-
-                            {
-                                QMutexLocker bufferLock(&m_bufferMutex);
-                                scaleFrameToImage(
-                                        swsCtx,
-                                        frame,
-                                        m_sharedImage,
-                                        codecCtx->width,
-                                        codecCtx->height);
-                            }
-
-                            m_frameCounter++;
-                            if (!m_framePending.exchange(true)) {
-                                emit frameReady();
-                            }
-                            break;
-                        }
-                    }
-                }
-                av_packet_unref(packet);
-            } else {
-                // EOF reached: rewind cleanly if track is still playing
-                av_seek_frame(formatCtx, videoStreamIdx, 0, AVSEEK_FLAG_BACKWARD);
-                avcodec_flush_buffers(codecCtx);
-                lastDecodedPtsSec = -1.0;
-                msleep(10);
-            }
-        }
-
-        // Clean up current file resources before reloading next track or exiting
-        av_frame_free(&frame);
-        av_packet_free(&packet);
-        sws_freeContext(swsCtx);
-        avcodec_free_context(&codecCtx);
-        avformat_close_input(&formatCtx);
-    }
-}
-
