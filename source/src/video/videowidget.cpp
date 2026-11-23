@@ -2,14 +2,27 @@
 #include <QPainter>
 #include <QTimer>
 
+QMap<QString, VideoWidget*> VideoWidget::s_deckWidgets;
+
 VideoWidget::VideoWidget(const QString& group, QWidget* parent)
         : QWidget(parent), m_group(group) {
     setAttribute(Qt::WA_OpaquePaintEvent);
+    s_deckWidgets.insert(m_group, this);
 
     // Lightweight timer so fader/crossfader opacity changes stay smooth even when paused
     QTimer* pFaderTimer = new QTimer(this);
     connect(pFaderTimer, &QTimer::timeout, this, QOverload<>::of(&VideoWidget::update));
     pFaderTimer->start(33); // ~30 Hz UI opacity refresh
+}
+
+VideoWidget::~VideoWidget() {
+    if (s_deckWidgets.value(m_group) == this) {
+        s_deckWidgets.remove(m_group);
+    }
+}
+
+VideoWidget* VideoWidget::getDeckWidget(const QString& group) {
+    return s_deckWidgets.value(group, nullptr);
 }
 
 void VideoWidget::setDecoder(VideoDecoder* decoder) {
