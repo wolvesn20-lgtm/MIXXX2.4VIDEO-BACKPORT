@@ -1172,6 +1172,7 @@ add_library(mixxx-lib STATIC EXCLUDE_FROM_ALL
   src/util/workerthread.cpp
   src/util/workerthreadscheduler.cpp
   src/util/xml.cpp
+  src/video/mastervideowidget.cpp
   src/video/videodecoder.cpp
   src/video/videowidget.cpp
   src/waveform/visualplayposition.cpp
