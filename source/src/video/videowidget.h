@@ -1,31 +1,39 @@
 #pragma once
 
-#include <QWidget>
 #include <QImage>
+#include <QMap>
 #include <QPaintEvent>
 #include <QString>
-#include "video/videodecoder.h"
+#include <QWidget>
+
 #include "track/track_decl.h"
+#include "video/videodecoder.h"
 
 class VideoWidget : public QWidget {
     Q_OBJECT
-public:
-    // Exact signature expected by legacyskinparser.cpp
+  public:
     VideoWidget(const QString& group, QWidget* parent = nullptr);
-    ~VideoWidget() override = default;
+    ~VideoWidget() override; // NEW: unregister on destroy
 
     void setDecoder(VideoDecoder* decoder);
 
-public slots:
-    void slotFrameReady(); 
+    // NEW: Accessors for MasterVideoWidget
+    static VideoWidget* getDeckWidget(const QString& group);
+    const QImage& currentFrame() const { return m_uiFrame; }
+    VideoDecoder* decoder() const { return m_pDecoder; }
+
+  public slots:
+    void slotFrameReady();
     void slotLoadTrack(TrackPointer pTrack);
 
-protected:
+  protected:
     void paintEvent(QPaintEvent* event) override;
 
-private:
+  private:
+    static QMap<QString, VideoWidget*> s_deckWidgets; // NEW
+
     VideoDecoder* m_pDecoder{nullptr};
-    QImage m_uiFrame;                 
-    uint64_t m_lastRenderedFrame{0};  
+    QImage m_uiFrame;
+    uint64_t m_lastRenderedFrame{0};
     QString m_group;
 };
