@@ -7,9 +7,6 @@
 #include <QTimer>
 #include <QtGlobal>
 
-// ============================================================================
-// ProjectorWindow (Pop-out output for external monitor / projector)
-// ============================================================================
 ProjectorWindow::ProjectorWindow(MasterVideoWidget* pMaster, QWidget* parent)
         : QWidget(parent, Qt::Window),
           m_pMaster(pMaster) {
@@ -42,28 +39,32 @@ void ProjectorWindow::closeEvent(QCloseEvent* event) {
     QWidget::closeEvent(event);
 }
 
-// ============================================================================
-// MasterVideoWidget (Center mixer preview + transition compositor)
-// ============================================================================
 MasterVideoWidget::MasterVideoWidget(QWidget* parent)
         : QWidget(parent) {
     setAttribute(Qt::WA_OpaquePaintEvent);
-    setToolTip(QStringLiteral("Double-click to pop out Projector Window | Right-click for Transitions"));
+    setToolTip(QStringLiteral("Double-click: Pop out Projector | Right-click: Transitions & Preview Options"));
 
     m_pCrossfader = new ControlProxy(ConfigKey("[Master]", "crossfader"), this);
     m_pVol1 = new ControlProxy(ConfigKey("[Channel1]", "volume"), this);
     m_pVol2 = new ControlProxy(ConfigKey("[Channel2]", "volume"), this);
 
-    // Mappable Mixxx ControlObject (0=Mix, 1=WipeH, 2=WipeV, 3=Cut, 4=Zoom)
     m_pTransitionControl = new ControlObject(ConfigKey("[Master]", "video_transition"));
     m_pTransitionControl->set(0.0);
 
-    // Refresh both center preview and pop-out projector at ~30 FPS
+    m_pUpfaderPreviewControl = new ControlObject(ConfigKey("[Master]", "video_upfader_preview"));
+    m_pUpfaderPreviewControl->set(1.0);
+
     QTimer* pRefreshTimer = new QTimer(this);
     connect(pRefreshTimer, &QTimer::timeout, this, [this]() {
         if (m_pTransitionControl) {
             int modeVal = qBound(0, static_cast<int>(m_pTransitionControl->get()), 4);
             m_transition = static_cast<TransitionMode>(modeVal);
+        }
+        if (m_pUpfaderPreviewControl) {
+            bool wantPreview = m_pUpfaderPreviewControl->get() > 0.5;
+            if (wantPreview != VideoWidget::isUpfaderPreviewEnabled()) {
+                VideoWidget::setUpfaderPreviewEnabled(wantPreview);
+            }
         }
         update();
         if (m_pProjectorWindow && m_pProjectorWindow->isVisible()) {
@@ -79,6 +80,7 @@ MasterVideoWidget::~MasterVideoWidget() {
         delete m_pProjectorWindow;
     }
     delete m_pTransitionControl;
+    delete m_pUpfaderPreviewControl;
 }
 
 void MasterVideoWidget::setTransitionMode(TransitionMode mode) {
@@ -121,6 +123,16 @@ void MasterVideoWidget::contextMenuEvent(QContextMenuEvent* event) {
                     ? QStringLiteral("Close Projector Window")
                     : QStringLiteral("Pop Out Projector Window"));
     connect(popOutAct, &QAction::triggered, this, &MasterVideoWidget::toggleProjectorWindow);
+
+    QAction* faderPreviewAct = menu.addAction(QStringLiteral("Deck Preview Follows Upfaders"));
+    faderPreviewAct->setCheckable(true);
+    faderPreviewAct->setChecked(VideoWidget::isUpfaderPreviewEnabled());
+    connect(faderPreviewAct, &QAction::triggered, this, [this](bool checked) {
+        VideoWidget::setUpfaderPreviewEnabled(checked);
+        if (m_pUpfaderPreviewControl) {
+            m_pUpfaderPreviewControl->set(checked ? 1.0 : 0.0);
+        }
+    });
 
     menu.addSeparator();
 
@@ -183,7 +195,7 @@ void MasterVideoWidget::renderComposite(QPainter& painter, const QRect& targetRe
     QImage img2 = deck2 ? deck2->currentFrame() : QImage();
 
     double xfader = m_pCrossfader ? qBound(-1.0, m_pCrossfader->get(), 1.0) : 0.0;
-    double mix = (xfader + 1.0) * 0.5; // 0.0 = full Deck 1, 1.0 = full Deck 2
+    double mix = (xfader + 1.0) * 0.5;
     double vol1 = m_pVol1 ? qBound(0.0, m_pVol1->get(), 1.0) : 1.0;
     double vol2 = m_pVol2 ? qBound(0.0, m_pVol2->get(), 1.0) : 1.0;
 
@@ -207,16 +219,12 @@ void MasterVideoWidget::renderComposite(QPainter& painter, const QRect& targetRe
 
         case TransitionMode::WipeHorizontal: {
             int splitX = targetRect.x() + static_cast<int>(targetRect.width() * (1.0 - mix));
-
-            // Left side: Deck 1
             if (splitX > targetRect.x()) {
                 painter.save();
                 painter.setClipRect(QRect(targetRect.x(), targetRect.y(), splitX - targetRect.x(), targetRect.height()));
                 drawCentered(painter, targetRect, img1, vol1);
                 painter.restore();
             }
-
-            // Right side: Deck 2
             if (splitX < targetRect.right()) {
                 painter.save();
                 painter.setClipRect(QRect(splitX, targetRect.y(), targetRect.right() - splitX + 1, targetRect.height()));
@@ -228,16 +236,12 @@ void MasterVideoWidget::renderComposite(QPainter& painter, const QRect& targetRe
 
         case TransitionMode::WipeVertical: {
             int splitY = targetRect.y() + static_cast<int>(targetRect.height() * (1.0 - mix));
-
-            // Top: Deck 1
             if (splitY > targetRect.y()) {
                 painter.save();
                 painter.setClipRect(QRect(targetRect.x(), targetRect.y(), targetRect.width(), splitY - targetRect.y()));
                 drawCentered(painter, targetRect, img1, vol1);
                 painter.restore();
             }
-
-            // Bottom: Deck 2
             if (splitY < targetRect.bottom()) {
                 painter.save();
                 painter.setClipRect(QRect(targetRect.x(), splitY, targetRect.width(), targetRect.bottom() - splitY + 1));
@@ -248,7 +252,6 @@ void MasterVideoWidget::renderComposite(QPainter& painter, const QRect& targetRe
         }
 
         case TransitionMode::Zoom: {
-            // Deck 1 shrinks out as Deck 2 zooms in from center
             double scale1 = 1.0 - (0.35 * mix);
             double scale2 = 0.65 + (0.35 * mix);
 
@@ -264,4 +267,3 @@ void MasterVideoWidget::renderComposite(QPainter& painter, const QRect& targetRe
                     static_cast<int>(targetRect.width() * scale2),
                     static_cast<int>(targetRect.height() * scale2));
 
-            drawCentered(painter, rect1, img1, vol1 * (1.0 - mix));
