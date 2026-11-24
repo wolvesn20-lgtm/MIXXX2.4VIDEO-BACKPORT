@@ -252,18 +252,22 @@ void MasterVideoWidget::renderComposite(QPainter& painter, const QRect& targetRe
         }
 
         case TransitionMode::Zoom: {
-            double scale1 = 1.0 - (0.35 * mix);
-            double scale2 = 0.65 + (0.35 * mix);
-
+            double scale1 = 1.0 + (mix * 0.5);
             QRect rect1(
-                    targetRect.center().x() - static_cast<int>((targetRect.width() * scale1) / 2),
-                    targetRect.center().y() - static_cast<int>((targetRect.height() * scale1) / 2),
+                    targetRect.center().x() - static_cast<int>(targetRect.width() * scale1 * 0.5),
+                    targetRect.center().y() - static_cast<int>(targetRect.height() * scale1 * 0.5),
                     static_cast<int>(targetRect.width() * scale1),
                     static_cast<int>(targetRect.height() * scale1));
+            drawCentered(painter, rect1, img1, vol1 * (1.0 - mix));
 
+            double scale2 = 0.5 + (mix * 0.5);
             QRect rect2(
-                    targetRect.center().x() - static_cast<int>((targetRect.width() * scale2) / 2),
-                    targetRect.center().y() - static_cast<int>((targetRect.height() * scale2) / 2),
+                    targetRect.center().x() - static_cast<int>(targetRect.width() * scale2 * 0.5),
+                    targetRect.center().y() - static_cast<int>(targetRect.height() * scale2 * 0.5),
                     static_cast<int>(targetRect.width() * scale2),
                     static_cast<int>(targetRect.height() * scale2));
-
+            drawCentered(painter, rect2, img2, vol2 * mix);
+            break;
+        }
+    }
+}
