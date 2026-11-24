@@ -6,16 +6,16 @@
 
 QMap<QString, VideoWidget*> VideoWidget::s_deckWidgets;
 MasterVideoWidget* VideoWidget::s_pMasterWidget = nullptr;
+bool VideoWidget::s_upfaderPreview = true;
 
 VideoWidget::VideoWidget(const QString& group, QWidget* parent)
         : QWidget(parent), m_group(group) {
     setAttribute(Qt::WA_OpaquePaintEvent);
     s_deckWidgets.insert(m_group, this);
 
-    // Lightweight timer so fader/crossfader opacity changes stay smooth even when paused
     QTimer* pFaderTimer = new QTimer(this);
     connect(pFaderTimer, &QTimer::timeout, this, QOverload<>::of(&VideoWidget::update));
-    pFaderTimer->start(33); // ~30 Hz UI opacity refresh
+    pFaderTimer->start(33);
 
     QTimer::singleShot(0, this, &VideoWidget::syncMasterPreviewGeometry);
 }
@@ -32,6 +32,19 @@ VideoWidget::~VideoWidget() {
 
 VideoWidget* VideoWidget::getDeckWidget(const QString& group) {
     return s_deckWidgets.value(group, nullptr);
+}
+
+bool VideoWidget::isUpfaderPreviewEnabled() {
+    return s_upfaderPreview;
+}
+
+void VideoWidget::setUpfaderPreviewEnabled(bool enabled) {
+    s_upfaderPreview = enabled;
+    for (auto* w : s_deckWidgets) {
+        if (w) {
+            w->update();
+        }
+    }
 }
 
 void VideoWidget::resizeEvent(QResizeEvent* event) {
@@ -58,7 +71,6 @@ void VideoWidget::syncMasterPreviewGeometry() {
         s_pMasterWidget->setParent(topWin);
     }
 
-    // Map Deck 1 and Deck 2 positions into the main window's coordinate space
     QPoint d1TopLeft = deck1->mapTo(topWin, QPoint(0, 0));
     QPoint d2TopLeft = deck2->mapTo(topWin, QPoint(0, 0));
 
@@ -66,7 +78,6 @@ void VideoWidget::syncMasterPreviewGeometry() {
     int gapRight = d2TopLeft.x() - 6;
     int gapWidth = gapRight - gapLeft;
 
-    // Fallback width if decks are close together
     if (gapWidth < 120) {
         int centerX = (d1TopLeft.x() + deck1->width() + d2TopLeft.x()) / 2;
         gapWidth = qMax(140, deck1->width());
@@ -105,15 +116,13 @@ void VideoWidget::slotFrameReady() {
 void VideoWidget::paintEvent(QPaintEvent* event) {
     Q_UNUSED(event);
     QPainter painter(this);
-
-    // Always fill black first so lowering fader opacity fades cleanly to black
     painter.fillRect(rect(), Qt::black);
 
     if (m_uiFrame.isNull() || !m_pDecoder) {
         return;
     }
 
-    double opacity = m_pDecoder->getCalculatedOpacity();
+    double opacity = s_upfaderPreview ? m_pDecoder->getCalculatedOpacity() : 1.0;
     if (opacity <= 0.001) {
         return;
     }
