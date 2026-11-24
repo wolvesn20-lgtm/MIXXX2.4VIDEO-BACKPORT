@@ -22,6 +22,9 @@ class VideoWidget : public QWidget {
     void setDecoder(VideoDecoder* decoder);
 
     static VideoWidget* getDeckWidget(const QString& group);
+    static bool isUpfaderPreviewEnabled();
+    static void setUpfaderPreviewEnabled(bool enabled);
+
     const QImage& currentFrame() const { return m_uiFrame; }
     VideoDecoder* decoder() const { return m_pDecoder; }
 
@@ -39,6 +42,7 @@ class VideoWidget : public QWidget {
 
     static QMap<QString, VideoWidget*> s_deckWidgets;
     static MasterVideoWidget* s_pMasterWidget;
+    static bool s_upfaderPreview;
 
     VideoDecoder* m_pDecoder{nullptr};
     QImage m_uiFrame;
