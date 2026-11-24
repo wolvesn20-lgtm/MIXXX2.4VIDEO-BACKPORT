@@ -44,7 +44,6 @@ class MasterVideoWidget : public QWidget {
     explicit MasterVideoWidget(QWidget* parent = nullptr);
     ~MasterVideoWidget() override;
 
-    // Shared renderer used by both the docked preview and the pop-out projector window
     void renderComposite(QPainter& painter, const QRect& targetRect);
 
   public slots:
@@ -63,6 +62,7 @@ class MasterVideoWidget : public QWidget {
     ControlProxy* m_pVol1{nullptr};
     ControlProxy* m_pVol2{nullptr};
     ControlObject* m_pTransitionControl{nullptr};
+    ControlObject* m_pUpfaderPreviewControl{nullptr};
 
     TransitionMode m_transition{TransitionMode::Mix};
     ProjectorWindow* m_pProjectorWindow{nullptr};
