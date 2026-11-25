@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QImage>
 #include <QMap>
 #include <QMoveEvent>
@@ -36,6 +38,8 @@ class VideoWidget : public QWidget {
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void moveEvent(QMoveEvent* event) override;
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
 
   private:
     static void syncMasterPreviewGeometry();
