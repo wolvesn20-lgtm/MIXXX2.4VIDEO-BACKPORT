@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QComboBox>
 #include <QContextMenuEvent>
 #include <QImage>
 #include <QMouseEvent>
@@ -7,6 +8,7 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QString>
 #include <QWidget>
 
 #include "control/controlobject.h"
@@ -52,6 +54,8 @@ class MasterVideoWidget : public QWidget {
     void toggleProjectorWindow();
     void setTransitionMode(TransitionMode mode);
     void triggerAutoTransition();
+    void editSplashText();
+    void editLowerThirdText();
 
   protected:
     void paintEvent(QPaintEvent* event) override;
@@ -60,20 +64,33 @@ class MasterVideoWidget : public QWidget {
     void resizeEvent(QResizeEvent* event) override;
 
   private:
+    void buildQuickToolbar();
+    void syncToolbarStates();
+    void updateToolbarGeometry();
     void drawCentered(QPainter& painter, const QRect& targetRect, const QImage& img, double opacity);
-    void updateOverlayLayout();
+    void renderCameraLayer(QPainter& painter, const QRect& targetRect);
+    void renderOverlayLayer(QPainter& painter, const QRect& targetRect);
+    void renderLowerThirdLayer(QPainter& painter, const QRect& targetRect);
+    void renderRgbSplashLayer(QPainter& painter, const QRect& targetRect);
 
     ControlProxy* m_pCrossfader{nullptr};
     ControlProxy* m_pVol1{nullptr};
     ControlProxy* m_pVol2{nullptr};
     ControlProxy* m_pPlay1{nullptr};
     ControlProxy* m_pPlay2{nullptr};
+    ControlProxy* m_pBeatActive1{nullptr};
+    ControlProxy* m_pBeatActive2{nullptr};
 
     ControlObject* m_pTransitionControl{nullptr};
     ControlObject* m_pUpfaderPreviewControl{nullptr};
     ControlObject* m_pCueTransitionControl{nullptr};
     ControlObject* m_pAutoPlayControl{nullptr};
     ControlObject* m_pRandomTransitionControl{nullptr};
+    ControlObject* m_pBeatSyncControl{nullptr};
+    ControlObject* m_pCameraSourceControl{nullptr};
+    ControlObject* m_pLowerThirdControl{nullptr};
+    ControlObject* m_pOverlayControl{nullptr};
+    ControlObject* m_pRgbSplashControl{nullptr};
 
     TransitionMode m_transition{TransitionMode::Mix};
     ProjectorWindow* m_pProjectorWindow{nullptr};
@@ -81,13 +98,33 @@ class MasterVideoWidget : public QWidget {
     bool m_cueTransition{false};
     bool m_autoPlayEnabled{true};
     bool m_randomTransition{false};
+    bool m_beatSyncEnabled{false};
+    int m_cameraSource{0};
+
+    bool m_lowerThirdEnabled{false};
+    QString m_lowerThirdTitle{QStringLiteral("PHOENIX LIVE")};
+    QString m_lowerThirdSubtitle{QStringLiteral("Mixxx 2.4 Video Backport")};
+
+    bool m_overlayEnabled{false};
+    int m_overlayStyle{0};
+
+    bool m_rgbSplashEnabled{false};
+    QString m_rgbSplashText{QStringLiteral("PHOENIX VJ")};
+    int m_rgbPhase{0};
+
+    bool m_toolbarPinned{true};
 
     bool m_autoFadeActive{false};
     double m_autoFadeProgress{0.0};
     double m_autoFadeStart{0.0};
     double m_autoFadeTarget{1.0};
 
-    QPushButton* m_pCueBtn{nullptr};
-    QPushButton* m_pAutoTransBtn{nullptr};
-    QPushButton* m_pAutoPlayBtn{nullptr};
+    QWidget* m_pToolbarContainer{nullptr};
+    QComboBox* m_pTransitionDropdown{nullptr};
+    QPushButton* m_pBtnFadeNow{nullptr};
+    QPushButton* m_pBtnProjector{nullptr};
+    QPushButton* m_pBtnCamDropdown{nullptr};
+    QPushButton* m_pBtnLowerThird{nullptr};
+    QPushButton* m_pBtnOverlay{nullptr};
+    QPushButton* m_pBtnRgbSplash{nullptr};
 };
