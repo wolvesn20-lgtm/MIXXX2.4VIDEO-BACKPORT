@@ -3,10 +3,15 @@
 
 #include <QAction>
 #include <QCloseEvent>
+#include <QHBoxLayout>
+#include <QInputDialog>
+#include <QLinearGradient>
 #include <QMenu>
 #include <QRandomGenerator>
 #include <QTimer>
+#include <QVBoxLayout>
 #include <QtGlobal>
+#include <QtMath>
 
 ProjectorWindow::ProjectorWindow(MasterVideoWidget* pMaster, QWidget* parent)
         : QWidget(parent, Qt::Window),
@@ -43,13 +48,15 @@ void ProjectorWindow::closeEvent(QCloseEvent* event) {
 MasterVideoWidget::MasterVideoWidget(QWidget* parent)
         : QWidget(parent) {
     setAttribute(Qt::WA_OpaquePaintEvent);
-    setToolTip(QStringLiteral("Double-click: Pop out Projector | Right-click: Transitions & Preview Options"));
+    setToolTip(QStringLiteral("Double-click: Pop out Phoenix Projector | Right-click: Edit Texts & Options"));
 
     m_pCrossfader = new ControlProxy(ConfigKey("[Master]", "crossfader"), this);
     m_pVol1 = new ControlProxy(ConfigKey("[Channel1]", "volume"), this);
     m_pVol2 = new ControlProxy(ConfigKey("[Channel2]", "volume"), this);
     m_pPlay1 = new ControlProxy(ConfigKey("[Channel1]", "play"), this);
     m_pPlay2 = new ControlProxy(ConfigKey("[Channel2]", "play"), this);
+    m_pBeatActive1 = new ControlProxy(ConfigKey("[Channel1]", "beat_active"), this);
+    m_pBeatActive2 = new ControlProxy(ConfigKey("[Channel2]", "beat_active"), this);
 
     m_pTransitionControl = new ControlObject(ConfigKey("[Master]", "video_transition"));
     m_pTransitionControl->set(0.0);
@@ -66,45 +73,27 @@ MasterVideoWidget::MasterVideoWidget(QWidget* parent)
     m_pRandomTransitionControl = new ControlObject(ConfigKey("[Master]", "video_random_transition"));
     m_pRandomTransitionControl->set(0.0);
 
-    const QString btnStyle = QStringLiteral(
-            "QPushButton { background-color: rgba(20, 20, 24, 190); color: #E0E0E0; "
-            "border: 1px solid #555; border-radius: 3px; font-size: 10px; font-weight: bold; padding: 2px 6px; }"
-            "QPushButton:checked { background-color: #D9534F; color: white; border-color: #FF7675; }"
-            "QPushButton:hover { border-color: #FFA502; }");
+    m_pBeatSyncControl = new ControlObject(ConfigKey("[Master]", "video_beat_sync"));
+    m_pBeatSyncControl->set(0.0);
 
-    m_pCueBtn = new QPushButton(QStringLiteral("CUE"), this);
-    m_pCueBtn->setCheckable(true);
-    m_pCueBtn->setStyleSheet(btnStyle);
-    m_pCueBtn->setToolTip(QStringLiteral("Cue Transition: Preview transition in Master without sending to Projector"));
-    connect(m_pCueBtn, &QPushButton::toggled, this, [this](bool checked) {
-        m_cueTransition = checked;
-        if (m_pCueTransitionControl) {
-            m_pCueTransitionControl->set(checked ? 1.0 : 0.0);
-        }
-        update();
-    });
+    m_pCameraSourceControl = new ControlObject(ConfigKey("[Master]", "video_camera_source"));
+    m_pCameraSourceControl->set(0.0);
 
-    m_pAutoTransBtn = new QPushButton(QStringLiteral("AUTO FADE"), this);
-    m_pAutoTransBtn->setStyleSheet(btnStyle);
-    m_pAutoTransBtn->setToolTip(QStringLiteral("Trigger smooth auto-transition between Deck 1 and Deck 2"));
-    connect(m_pAutoTransBtn, &QPushButton::clicked, this, &MasterVideoWidget::triggerAutoTransition);
+    m_pLowerThirdControl = new ControlObject(ConfigKey("[Master]", "video_lower_third"));
+    m_pLowerThirdControl->set(0.0);
 
-    m_pAutoPlayBtn = new QPushButton(QStringLiteral("AUTO PLAY"), this);
-    m_pAutoPlayBtn->setCheckable(true);
-    m_pAutoPlayBtn->setChecked(true);
-    m_pAutoPlayBtn->setStyleSheet(btnStyle);
-    m_pAutoPlayBtn->setToolTip(QStringLiteral("Auto-Play target deck video when transitioning"));
-    connect(m_pAutoPlayBtn, &QPushButton::toggled, this, [this](bool checked) {
-        m_autoPlayEnabled = checked;
-        if (m_pAutoPlayControl) {
-            m_pAutoPlayControl->set(checked ? 1.0 : 0.0);
-        }
-    });
+    m_pOverlayControl = new ControlObject(ConfigKey("[Master]", "video_overlay"));
+    m_pOverlayControl->set(0.0);
 
-    updateOverlayLayout();
+    m_pRgbSplashControl = new ControlObject(ConfigKey("[Master]", "video_rgb_splash"));
+    m_pRgbSplashControl->set(0.0);
+
+    buildQuickToolbar();
 
     QTimer* pRefreshTimer = new QTimer(this);
     connect(pRefreshTimer, &QTimer::timeout, this, [this]() {
+        m_rgbPhase = (m_rgbPhase + 6) % 360;
+
         if (m_pTransitionControl) {
             int modeVal = qBound(0, static_cast<int>(m_pTransitionControl->get()), 4);
             m_transition = static_cast<TransitionMode>(modeVal);
@@ -116,29 +105,43 @@ MasterVideoWidget::MasterVideoWidget(QWidget* parent)
             }
         }
         if (m_pCueTransitionControl) {
-            bool wantCue = m_pCueTransitionControl->get() > 0.5;
-            if (wantCue != m_cueTransition) {
-                m_cueTransition = wantCue;
-                if (m_pCueBtn) {
-                    m_pCueBtn->setChecked(wantCue);
-                }
-            }
+            m_cueTransition = m_pCueTransitionControl->get() > 0.5;
         }
         if (m_pAutoPlayControl) {
-            bool wantAutoPlay = m_pAutoPlayControl->get() > 0.5;
-            if (wantAutoPlay != m_autoPlayEnabled) {
-                m_autoPlayEnabled = wantAutoPlay;
-                if (m_pAutoPlayBtn) {
-                    m_pAutoPlayBtn->setChecked(wantAutoPlay);
-                }
-            }
+            m_autoPlayEnabled = m_pAutoPlayControl->get() > 0.5;
         }
         if (m_pRandomTransitionControl) {
             m_randomTransition = m_pRandomTransitionControl->get() > 0.5;
         }
+        if (m_pBeatSyncControl) {
+            m_beatSyncEnabled = m_pBeatSyncControl->get() > 0.5;
+        }
+        if (m_pCameraSourceControl) {
+            m_cameraSource = qBound(0, static_cast<int>(m_pCameraSourceControl->get()), 3);
+        }
+        if (m_pLowerThirdControl) {
+            m_lowerThirdEnabled = m_pLowerThirdControl->get() > 0.5;
+        }
+        if (m_pOverlayControl) {
+            m_overlayEnabled = m_pOverlayControl->get() > 0.5;
+        }
+        if (m_pRgbSplashControl) {
+            m_rgbSplashEnabled = m_pRgbSplashControl->get() > 0.5;
+        }
+
+        if (m_beatSyncEnabled && m_randomTransition) {
+            bool beatHit = (m_pBeatActive1 && m_pBeatActive1->get() > 0.5) ||
+                           (m_pBeatActive2 && m_pBeatActive2->get() > 0.5);
+            static bool prevBeat = false;
+            if (beatHit && !prevBeat) {
+                int nextMode = QRandomGenerator::global()->bounded(5);
+                setTransitionMode(static_cast<TransitionMode>(nextMode));
+            }
+            prevBeat = beatHit;
+        }
 
         if (m_autoFadeActive && m_pCrossfader) {
-            m_autoFadeProgress += 0.025; // ~1.3s smooth transition at 30fps
+            m_autoFadeProgress += 0.03;
             if (m_autoFadeProgress >= 1.0) {
                 m_autoFadeProgress = 1.0;
                 m_autoFadeActive = false;
@@ -147,6 +150,7 @@ MasterVideoWidget::MasterVideoWidget(QWidget* parent)
             m_pCrossfader->set(nextXfader);
         }
 
+        syncToolbarStates();
         update();
         if (m_pProjectorWindow && m_pProjectorWindow->isVisible()) {
             m_pProjectorWindow->update();
@@ -165,114 +169,71 @@ MasterVideoWidget::~MasterVideoWidget() {
     delete m_pCueTransitionControl;
     delete m_pAutoPlayControl;
     delete m_pRandomTransitionControl;
+    delete m_pBeatSyncControl;
+    delete m_pCameraSourceControl;
+    delete m_pLowerThirdControl;
+    delete m_pOverlayControl;
+    delete m_pRgbSplashControl;
 }
 
-void MasterVideoWidget::updateOverlayLayout() {
-    const int margin = 6;
-    const int btnH = 20;
-    int y = height() - btnH - margin;
-    if (y < margin) {
-        y = margin;
-    }
-    if (m_pCueBtn) {
-        m_pCueBtn->setGeometry(margin, y, 42, btnH);
-    }
-    if (m_pAutoTransBtn) {
-        m_pAutoTransBtn->setGeometry(margin + 46, y, 74, btnH);
-    }
-    if (m_pAutoPlayBtn) {
-        m_pAutoPlayBtn->setGeometry(width() - 74 - margin, y, 74, btnH);
-    }
-}
+void MasterVideoWidget::buildQuickToolbar() {
+    m_pToolbarContainer = new QWidget(this);
+    m_pToolbarContainer->setStyleSheet(QStringLiteral(
+            "QWidget { background-color: rgba(15, 15, 20, 195); border-radius: 4px; }"
+            "QPushButton, QComboBox { background-color: #121218; color: #EAEAEF; border: 1px solid #3C3C48; "
+            "border-radius: 3px; font-size: 8px; font-weight: bold; padding: 1px 5px; min-height: 15px; }"
+            "QPushButton:checked { background-color: #E85D04; color: #FFFFFF; border-color: #FF9E00; }"
+            "QPushButton:hover, QComboBox:hover { border-color: #FF9E00; }"
+            "QComboBox::drop-down { border: none; width: 12px; }"
+            "QComboBox QAbstractItemView { background-color: #16161D; color: #EAEAEF; selection-background-color: #E85D04; }"));
 
-void MasterVideoWidget::resizeEvent(QResizeEvent* event) {
-    QWidget::resizeEvent(event);
-    updateOverlayLayout();
-}
+    QVBoxLayout* mainLayout = new QVBoxLayout(m_pToolbarContainer);
+    mainLayout->setContentsMargins(4, 3, 4, 3);
+    mainLayout->setSpacing(3);
 
-void MasterVideoWidget::triggerAutoTransition() {
-    if (!m_pCrossfader) {
-        return;
-    }
-    if (m_randomTransition) {
-        int randMode = QRandomGenerator::global()->bounded(5);
-        setTransitionMode(static_cast<TransitionMode>(randMode));
-    }
-    double current = m_pCrossfader->get();
-    m_autoFadeStart = current;
-    m_autoFadeTarget = (current <= 0.0) ? 1.0 : -1.0;
-    m_autoFadeProgress = 0.0;
-    m_autoFadeActive = true;
+    QHBoxLayout* row1 = new QHBoxLayout();
+    row1->setSpacing(4);
 
-    if (m_autoPlayEnabled) {
-        if (m_autoFadeTarget > 0.0 && m_pPlay2 && m_pPlay2->get() < 0.5) {
-            m_pPlay2->set(1.0);
-        } else if (m_autoFadeTarget < 0.0 && m_pPlay1 && m_pPlay1->get() < 0.5) {
-            m_pPlay1->set(1.0);
-        }
-    }
-}
+    m_pTransitionDropdown = new QComboBox(m_pToolbarContainer);
+    m_pTransitionDropdown->setFocusPolicy(Qt::NoFocus);
+    m_pTransitionDropdown->addItem(QStringLiteral("Trans: Mix ▾"), static_cast<int>(TransitionMode::Mix));
+    m_pTransitionDropdown->addItem(QStringLiteral("Trans: Wipe H ▾"), static_cast<int>(TransitionMode::WipeHorizontal));
+    m_pTransitionDropdown->addItem(QStringLiteral("Trans: Wipe V ▾"), static_cast<int>(TransitionMode::WipeVertical));
+    m_pTransitionDropdown->addItem(QStringLiteral("Trans: Cut ▾"), static_cast<int>(TransitionMode::Cut));
+    m_pTransitionDropdown->addItem(QStringLiteral("Trans: Zoom ▾"), static_cast<int>(TransitionMode::Zoom));
+    m_pTransitionDropdown->addItem(QStringLiteral("Option: Cue Preview"), 100);
+    m_pTransitionDropdown->addItem(QStringLiteral("Option: Auto Play"), 101);
+    m_pTransitionDropdown->addItem(QStringLiteral("Option: Randomize"), 102);
+    m_pTransitionDropdown->addItem(QStringLiteral("Option: Beat Sync"), 103);
 
-void MasterVideoWidget::setTransitionMode(TransitionMode mode) {
-    m_transition = mode;
-    if (m_pTransitionControl) {
-        m_pTransitionControl->set(static_cast<double>(mode));
-    }
-    update();
-}
+    m_pBtnFadeNow = new QPushButton(QStringLiteral("FADE"), m_pToolbarContainer);
+    m_pBtnFadeNow->setFocusPolicy(Qt::NoFocus);
+    m_pBtnFadeNow->setToolTip(QStringLiteral("Trigger smooth auto-fade between Deck 1 & Deck 2"));
 
-void MasterVideoWidget::toggleProjectorWindow() {
-    if (m_pProjectorWindow && m_pProjectorWindow->isVisible()) {
-        m_pProjectorWindow->close();
-        return;
-    }
+    m_pBtnProjector = new QPushButton(QStringLiteral("PHOENIX OUT"), m_pToolbarContainer);
+    m_pBtnProjector->setCheckable(true);
+    m_pBtnProjector->setFocusPolicy(Qt::NoFocus);
 
-    if (!m_pProjectorWindow) {
-        m_pProjectorWindow = new ProjectorWindow(this);
-        connect(m_pProjectorWindow, &ProjectorWindow::windowClosed, this, [this]() {
-            m_pProjectorWindow->deleteLater();
-            m_pProjectorWindow = nullptr;
-        });
-    }
+    row1->addWidget(m_pTransitionDropdown, 3);
+    row1->addWidget(m_pBtnFadeNow, 1);
+    row1->addWidget(m_pBtnProjector, 2);
 
-    m_pProjectorWindow->show();
-    m_pProjectorWindow->raise();
-    m_pProjectorWindow->activateWindow();
-}
+    QHBoxLayout* row2 = new QHBoxLayout();
+    row2->setSpacing(4);
 
-void MasterVideoWidget::mouseDoubleClickEvent(QMouseEvent* event) {
-    Q_UNUSED(event);
-    toggleProjectorWindow();
-}
+    m_pBtnCamDropdown = new QPushButton(QStringLiteral("CAM: OFF ▾"), m_pToolbarContainer);
+    m_pBtnCamDropdown->setCheckable(true);
+    m_pBtnCamDropdown->setFocusPolicy(Qt::NoFocus);
 
-void MasterVideoWidget::contextMenuEvent(QContextMenuEvent* event) {
-    QMenu menu(this);
+    m_pBtnLowerThird = new QPushButton(QStringLiteral("LOWER 3RD"), m_pToolbarContainer);
+    m_pBtnLowerThird->setCheckable(true);
+    m_pBtnLowerThird->setFocusPolicy(Qt::NoFocus);
+    m_pBtnLowerThird->setToolTip(QStringLiteral("Toggle Lower Third banner (Right-click to edit text)"));
 
-    QAction* popOutAct = menu.addAction(
-            (m_pProjectorWindow && m_pProjectorWindow->isVisible())
-                    ? QStringLiteral("Close Projector Window")
-                    : QStringLiteral("Pop Out Projector Window"));
-    connect(popOutAct, &QAction::triggered, this, &MasterVideoWidget::toggleProjectorWindow);
+    m_pBtnOverlay = new QPushButton(QStringLiteral("OVERLAY"), m_pToolbarContainer);
+    m_pBtnOverlay->setCheckable(true);
+    m_pBtnOverlay->setFocusPolicy(Qt::NoFocus);
+    m_pBtnOverlay->setToolTip(QStringLiteral("Toggle Visual Overlay layer"));
 
-    QAction* cueAct = menu.addAction(QStringLiteral("Cue Transition (Preview in Master Only)"));
-    cueAct->setCheckable(true);
-    cueAct->setChecked(m_cueTransition);
-    connect(cueAct, &QAction::triggered, this, [this](bool checked) {
-        m_cueTransition = checked;
-        if (m_pCueBtn) {
-            m_pCueBtn->setChecked(checked);
-        }
-        if (m_pCueTransitionControl) {
-            m_pCueTransitionControl->set(checked ? 1.0 : 0.0);
-        }
-        update();
-    });
-
-    QAction* autoPlayAct = menu.addAction(QStringLiteral("Auto-Play Deck on Transition"));
-    autoPlayAct->setCheckable(true);
-    autoPlayAct->setChecked(m_autoPlayEnabled);
-    connect(autoPlayAct, &QAction::triggered, this, [this](bool checked) {
-        m_autoPlayEnabled = checked;
-        if (m_pAutoPlayBtn) {
-            m_pAutoPlayBtn->setChecked(checked);
-        }
+    m_pBtnRgbSplash = new QPushButton(QStringLiteral("RGB SPLASH"), m_pToolbarContainer);
+    m_pBtnRgbSplash->setCheckable(true);
