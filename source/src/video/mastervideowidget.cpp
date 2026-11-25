@@ -484,7 +484,6 @@ void MasterVideoWidget::setTransitionMode(TransitionMode mode) {
     syncToolbarStates();
     update();
 }
-
 void MasterVideoWidget::toggleProjectorWindow() {
     if (m_pProjectorWindow && m_pProjectorWindow->isVisible()) {
         m_pProjectorWindow->close();
@@ -492,3 +491,361 @@ void MasterVideoWidget::toggleProjectorWindow() {
         return;
     }
 
+    if (!m_pProjectorWindow) {
+        m_pProjectorWindow = new ProjectorWindow(this);
+        connect(m_pProjectorWindow, &ProjectorWindow::windowClosed, this, [this]() {
+            m_pProjectorWindow->deleteLater();
+            m_pProjectorWindow = nullptr;
+            syncToolbarStates();
+        });
+    }
+
+    m_pProjectorWindow->show();
+    m_pProjectorWindow->raise();
+    m_pProjectorWindow->activateWindow();
+    syncToolbarStates();
+}
+
+void MasterVideoWidget::mouseDoubleClickEvent(QMouseEvent* event) {
+    Q_UNUSED(event);
+    toggleProjectorWindow();
+}
+
+void MasterVideoWidget::contextMenuEvent(QContextMenuEvent* event) {
+    QMenu menu(this);
+
+    QAction* editSplashAct = menu.addAction(QStringLiteral("Edit RGB Billboard Splash Text..."));
+    connect(editSplashAct, &QAction::triggered, this, &MasterVideoWidget::editSplashText);
+
+    QAction* editL3Act = menu.addAction(QStringLiteral("Edit Lower Third Text..."));
+    connect(editL3Act, &QAction::triggered, this, &MasterVideoWidget::editLowerThirdText);
+
+    QAction* cycleOverlayAct = menu.addAction(QStringLiteral("Cycle Overlay Style (Neon / Scanlines / Phoenix)"));
+    connect(cycleOverlayAct, &QAction::triggered, this, [this]() {
+        m_overlayStyle = (m_overlayStyle + 1) % 3;
+        m_overlayEnabled = true;
+        if (m_pOverlayControl) m_pOverlayControl->set(1.0);
+        update();
+    });
+
+    menu.addSeparator();
+
+    QAction* popOutAct = menu.addAction(
+            (m_pProjectorWindow && m_pProjectorWindow->isVisible())
+                    ? QStringLiteral("Close Phoenix Projector Window")
+                    : QStringLiteral("Pop Out Phoenix Projector Window"));
+    connect(popOutAct, &QAction::triggered, this, &MasterVideoWidget::toggleProjectorWindow);
+
+    QAction* pinToolbarAct = menu.addAction(QStringLiteral("Pin Quick Access Bar"));
+    pinToolbarAct->setCheckable(true);
+    pinToolbarAct->setChecked(m_toolbarPinned);
+    connect(pinToolbarAct, &QAction::triggered, this, [this](bool checked) {
+        m_toolbarPinned = checked;
+        updateToolbarGeometry();
+    });
+
+    menu.exec(event->globalPos());
+}
+
+void MasterVideoWidget::paintEvent(QPaintEvent* event) {
+    Q_UNUSED(event);
+    QPainter painter(this);
+    renderComposite(painter, rect(), false);
+}
+
+void MasterVideoWidget::drawCentered(
+        QPainter& painter,
+        const QRect& targetRect,
+        const QImage& img,
+        double opacity) {
+    if (img.isNull() || opacity <= 0.001) {
+        return;
+    }
+
+    QSize scaledSize = img.size().scaled(targetRect.size(), Qt::KeepAspectRatioByExpanding);
+    int x = targetRect.x() + (targetRect.width() - scaledSize.width()) / 2;
+    int y = targetRect.y() + (targetRect.height() - scaledSize.height()) / 2;
+
+    painter.save();
+    painter.setOpacity(qBound(0.0, opacity, 1.0));
+    painter.drawImage(QRect(x, y, scaledSize.width(), scaledSize.height()), img);
+    painter.restore();
+}
+
+void MasterVideoWidget::renderCameraLayer(QPainter& painter, const QRect& targetRect) {
+    if (m_cameraSource <= 0) {
+        return;
+    }
+    painter.save();
+    QLinearGradient bgGrad(targetRect.topLeft(), targetRect.bottomRight());
+    bgGrad.setColorAt(0.0, QColor(12, 24, 38));
+    bgGrad.setColorAt(1.0, QColor(28, 14, 42));
+    painter.fillRect(targetRect, bgGrad);
+
+    painter.setPen(QColor(255, 255, 255, 210));
+    QFont f = painter.font();
+    f.setPointSize(qMax(10, targetRect.height() / 16));
+    f.setBold(true);
+    painter.setFont(f);
+
+    QString camLabel = (m_cameraSource == 1)
+            ? QStringLiteral("LIVE CAMERA 1 FEED")
+            : (m_cameraSource == 2)
+                    ? QStringLiteral("LIVE CAMERA 2 FEED")
+                    : QStringLiteral("WI-FI HOTSPOT CAMERA STREAM");
+    painter.drawText(targetRect, Qt::AlignCenter, camLabel);
+    painter.restore();
+}
+
+void MasterVideoWidget::renderOverlayLayer(QPainter& painter, const QRect& targetRect) {
+    if (!m_overlayEnabled) {
+        return;
+    }
+    painter.save();
+    if (m_overlayStyle == 0) {
+        QColor neon = QColor::fromHsv(m_rgbPhase, 255, 255);
+        QPen pen(neon, qMax(3, targetRect.width() / 160));
+        painter.setPen(pen);
+        painter.drawRect(targetRect.adjusted(6, 6, -6, -6));
+    } else if (m_overlayStyle == 1) {
+        painter.setPen(QColor(0, 0, 0, 75));
+        for (int y = targetRect.top(); y < targetRect.bottom(); y += 4) {
+            painter.drawLine(targetRect.left(), y, targetRect.right(), y);
+        }
+    } else {
+        painter.setPen(QColor(255, 165, 0, 190));
+        QFont f = painter.font();
+        f.setPointSize(qMax(9, targetRect.height() / 22));
+        f.setBold(true);
+        painter.setFont(f);
+        painter.drawText(targetRect.adjusted(12, 10, -12, -10), Qt::AlignTop | Qt::AlignRight, QStringLiteral("PHOENIX VJ"));
+    }
+    painter.restore();
+}
+
+void MasterVideoWidget::renderLowerThirdLayer(QPainter& painter, const QRect& targetRect) {
+    if (!m_lowerThirdEnabled) {
+        return;
+    }
+    painter.save();
+    int barH = qMax(34, targetRect.height() / 6);
+    int barW = static_cast<int>(targetRect.width() * 0.62);
+    int x = targetRect.left() + static_cast<int>(targetRect.width() * 0.04);
+    int y = targetRect.bottom() - barH - static_cast<int>(targetRect.height() * 0.14);
+
+    QRect bannerRect(x, y, barW, barH);
+    QLinearGradient grad(bannerRect.topLeft(), bannerRect.topRight());
+    grad.setColorAt(0.0, QColor(232, 93, 4, 230));
+    grad.setColorAt(0.7, QColor(20, 20, 28, 225));
+    grad.setColorAt(1.0, QColor(20, 20, 28, 0));
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(grad);
+    painter.drawRoundedRect(bannerRect, 4, 4);
+
+    painter.setBrush(QColor::fromHsv(m_rgbPhase, 240, 255));
+    painter.drawRect(QRect(x, y, 4, barH));
+
+    painter.setPen(Qt::white);
+    QFont titleFont = painter.font();
+    titleFont.setPointSize(qMax(9, barH / 3));
+    titleFont.setBold(true);
+    painter.setFont(titleFont);
+    painter.drawText(
+            QRect(x + 12, y + 2, barW - 16, barH / 2),
+            Qt::AlignLeft | Qt::AlignVCenter,
+            m_lowerThirdTitle);
+
+    painter.setPen(QColor(255, 200, 120));
+    QFont subFont = painter.font();
+    subFont.setPointSize(qMax(7, barH / 4));
+    subFont.setBold(false);
+    painter.setFont(subFont);
+    painter.drawText(
+            QRect(x + 12, y + (barH / 2), barW - 16, barH / 2 - 2),
+            Qt::AlignLeft | Qt::AlignVCenter,
+            m_lowerThirdSubtitle);
+    painter.restore();
+}
+
+void MasterVideoWidget::renderRgbSplashLayer(QPainter& painter, const QRect& targetRect) {
+    if (!m_rgbSplashEnabled || m_rgbSplashText.isEmpty()) {
+        return;
+    }
+    painter.save();
+
+    painter.fillRect(targetRect, QColor(5, 5, 10, 195));
+
+    const int cols = qBound(48, targetRect.width() / 7, 140);
+    const int rows = qBound(24, targetRect.height() / 7, 80);
+
+    QImage textMask(cols, rows, QImage::Format_ARGB32_Premultiplied);
+    textMask.fill(Qt::transparent);
+
+    {
+        QPainter maskPainter(&textMask);
+        maskPainter.setPen(Qt::white);
+
+        int fontSize = qMax(8, rows / 3);
+        QFont ledFont(QStringLiteral("Arial Black"), fontSize, QFont::Bold);
+        ledFont.setStyleStrategy(QFont::NoAntialias);
+        maskPainter.setFont(ledFont);
+
+        QRect maskRect(2, 2, cols - 4, rows - 4);
+        QRect bounds = maskPainter.boundingRect(maskRect, Qt::AlignCenter | Qt::TextWordWrap, m_rgbSplashText);
+        while ((bounds.width() > cols - 4 || bounds.height() > rows - 4) && fontSize > 6) {
+            fontSize--;
+            ledFont.setPointSize(fontSize);
+            maskPainter.setFont(ledFont);
+            bounds = maskPainter.boundingRect(maskRect, Qt::AlignCenter | Qt::TextWordWrap, m_rgbSplashText);
+        }
+
+        maskPainter.drawText(maskRect, Qt::AlignCenter | Qt::TextWordWrap, m_rgbSplashText);
+    }
+
+    const double cellW = static_cast<double>(targetRect.width()) / cols;
+    const double cellH = static_cast<double>(targetRect.height()) / rows;
+    const double dotRadius = qMin(cellW, cellH) * 0.38;
+
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+
+    for (int r = 0; r < rows; ++r) {
+        const QRgb* scanLine = reinterpret_cast<const QRgb*>(textMask.constScanLine(r));
+        for (int c = 0; c < cols; ++c) {
+            double cx = targetRect.left() + (c + 0.5) * cellW;
+            double cy = targetRect.top() + (r + 0.5) * cellH;
+            bool isLit = qAlpha(scanLine[c]) > 100;
+
+            if (isLit) {
+                int hue = (m_rgbPhase + (c * 5) + (r * 7)) % 360;
+                QColor bulbColor = QColor::fromHsv(hue, 255, 255);
+                QColor glowColor = QColor::fromHsv(hue, 220, 255, 95);
+
+                painter.setBrush(glowColor);
+                painter.drawEllipse(QPointF(cx, cy), dotRadius * 1.55, dotRadius * 1.55);
+
+                painter.setBrush(bulbColor);
+                painter.drawEllipse(QPointF(cx, cy), dotRadius, dotRadius);
+            } else {
+                painter.setBrush(QColor(28, 28, 36, 120));
+                painter.drawEllipse(QPointF(cx, cy), dotRadius * 0.65, dotRadius * 0.65);
+            }
+        }
+    }
+
+    painter.restore();
+}
+
+void MasterVideoWidget::renderComposite(QPainter& painter, const QRect& targetRect, bool isProjectorOutput) {
+    painter.fillRect(targetRect, Qt::black);
+
+    if (m_cameraSource > 0) {
+        renderCameraLayer(painter, targetRect);
+    } else {
+        VideoWidget* deck1 = VideoWidget::getDeckWidget(QStringLiteral("[Channel1]"));
+        VideoWidget* deck2 = VideoWidget::getDeckWidget(QStringLiteral("[Channel2]"));
+
+        QImage img1 = deck1 ? deck1->currentFrame() : QImage();
+        QImage img2 = deck2 ? deck2->currentFrame() : QImage();
+
+        double xfader = m_pCrossfader ? qBound(-1.0, m_pCrossfader->get(), 1.0) : 0.0;
+        double mix = (xfader + 1.0) * 0.5;
+        double vol1 = m_pVol1 ? qBound(0.0, m_pVol1->get(), 1.0) : 1.0;
+        double vol2 = m_pVol2 ? qBound(0.0, m_pVol2->get(), 1.0) : 1.0;
+
+        if (isProjectorOutput && m_cueTransition) {
+            if (xfader <= 0.0) {
+                drawCentered(painter, targetRect, img1, vol1);
+            } else {
+                drawCentered(painter, targetRect, img2, vol2);
+            }
+        } else {
+            switch (m_transition) {
+                case TransitionMode::Mix: {
+                    double op1 = vol1 * (xfader <= 0.0 ? 1.0 : (1.0 - xfader));
+                    double op2 = vol2 * (xfader >= 0.0 ? 1.0 : (1.0 + xfader));
+                    drawCentered(painter, targetRect, img1, op1);
+                    drawCentered(painter, targetRect, img2, op2);
+                    break;
+                }
+                case TransitionMode::Cut: {
+                    if (xfader <= 0.0) {
+                        drawCentered(painter, targetRect, img1, vol1);
+                    } else {
+                        drawCentered(painter, targetRect, img2, vol2);
+                    }
+                    break;
+                }
+                case TransitionMode::WipeHorizontal: {
+                    int splitX = targetRect.x() + static_cast<int>(targetRect.width() * (1.0 - mix));
+                    if (splitX > targetRect.x()) {
+                        painter.save();
+                        painter.setClipRect(QRect(targetRect.x(), targetRect.y(), splitX - targetRect.x(), targetRect.height()));
+                        drawCentered(painter, targetRect, img1, vol1);
+                        painter.restore();
+                    }
+                    if (splitX < targetRect.right()) {
+                        painter.save();
+                        painter.setClipRect(QRect(splitX, targetRect.y(), targetRect.right() - splitX + 1, targetRect.height()));
+                        drawCentered(painter, targetRect, img2, vol2);
+                        painter.restore();
+                    }
+                    break;
+                }
+                case TransitionMode::WipeVertical: {
+                    int splitY = targetRect.y() + static_cast<int>(targetRect.height() * (1.0 - mix));
+                    if (splitY > targetRect.y()) {
+                        painter.save();
+                        painter.setClipRect(QRect(targetRect.x(), targetRect.y(), targetRect.width(), splitY - targetRect.y()));
+                        drawCentered(painter, targetRect, img1, vol1);
+                        painter.restore();
+                    }
+                    if (splitY < targetRect.bottom()) {
+                        painter.save();
+                        painter.setClipRect(QRect(targetRect.x(), splitY, targetRect.width(), targetRect.bottom() - splitY + 1));
+                        drawCentered(painter, targetRect, img2, vol2);
+                        painter.restore();
+                    }
+                    break;
+                }
+                case TransitionMode::Zoom: {
+                    double scale1 = 1.0 + (mix * 0.5);
+                    QRect rect1(
+                            targetRect.center().x() - static_cast<int>(targetRect.width() * scale1 * 0.5),
+                            targetRect.center().y() - static_cast<int>(targetRect.height() * scale1 * 0.5),
+                            static_cast<int>(targetRect.width() * scale1),
+                            static_cast<int>(targetRect.height() * scale1));
+                    drawCentered(painter, rect1, img1, vol1 * (1.0 - mix));
+
+                    double scale2 = 0.5 + (mix * 0.5);
+                    QRect rect2(
+                            targetRect.center().x() - static_cast<int>(targetRect.width() * scale2 * 0.5),
+                            targetRect.center().y() - static_cast<int>(targetRect.height() * scale2 * 0.5),
+                            static_cast<int>(targetRect.width() * scale2),
+                            static_cast<int>(targetRect.height() * scale2));
+                    drawCentered(painter, rect2, img2, vol2 * mix);
+                    break;
+                }
+            }
+        }
+    }
+
+    renderOverlayLayer(painter, targetRect);
+    renderLowerThirdLayer(painter, targetRect);
+    renderRgbSplashLayer(painter, targetRect);
+
+    if (!isProjectorOutput && m_cueTransition) {
+        painter.save();
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(217, 83, 79, 220));
+        painter.drawRoundedRect(QRect(targetRect.x() + 6, targetRect.y() + 6, 74, 16), 3, 3);
+        painter.setPen(Qt::white);
+        QFont f = painter.font();
+        f.setPointSize(8);
+        f.setBold(true);
+        painter.setFont(f);
+        painter.drawText(QRect(targetRect.x() + 6, targetRect.y() + 6, 74, 16), Qt::AlignCenter, QStringLiteral("CUE PREVIEW"));
+        painter.restore();
+    }
+}
