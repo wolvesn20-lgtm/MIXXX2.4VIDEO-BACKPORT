@@ -237,3 +237,258 @@ void MasterVideoWidget::buildQuickToolbar() {
 
     m_pBtnRgbSplash = new QPushButton(QStringLiteral("RGB SPLASH"), m_pToolbarContainer);
     m_pBtnRgbSplash->setCheckable(true);
+    m_pTransitionDropdown->addItem(QStringLiteral("Option: Auto Play"), 101);
+    m_pTransitionDropdown->addItem(QStringLiteral("Option: Randomize"), 102);
+    m_pTransitionDropdown->addItem(QStringLiteral("Option: Beat Sync"), 103);
+
+    m_pBtnFadeNow = new QPushButton(QStringLiteral("FADE"), m_pToolbarContainer);
+    m_pBtnFadeNow->setFocusPolicy(Qt::NoFocus);
+    m_pBtnFadeNow->setToolTip(QStringLiteral("Trigger smooth auto-fade between Deck 1 & Deck 2"));
+
+    m_pBtnProjector = new QPushButton(QStringLiteral("PHOENIX OUT"), m_pToolbarContainer);
+    m_pBtnProjector->setCheckable(true);
+    m_pBtnProjector->setFocusPolicy(Qt::NoFocus);
+
+    row1->addWidget(m_pTransitionDropdown, 3);
+    row1->addWidget(m_pBtnFadeNow, 1);
+    row1->addWidget(m_pBtnProjector, 2);
+
+    QHBoxLayout* row2 = new QHBoxLayout();
+    row2->setSpacing(4);
+
+    m_pBtnCamDropdown = new QPushButton(QStringLiteral("CAM: OFF ▾"), m_pToolbarContainer);
+    m_pBtnCamDropdown->setCheckable(true);
+    m_pBtnCamDropdown->setFocusPolicy(Qt::NoFocus);
+
+    m_pBtnLowerThird = new QPushButton(QStringLiteral("LOWER 3RD"), m_pToolbarContainer);
+    m_pBtnLowerThird->setCheckable(true);
+    m_pBtnLowerThird->setFocusPolicy(Qt::NoFocus);
+    m_pBtnLowerThird->setToolTip(QStringLiteral("Toggle Lower Third banner (Right-click to edit text)"));
+
+    m_pBtnOverlay = new QPushButton(QStringLiteral("OVERLAY"), m_pToolbarContainer);
+    m_pBtnOverlay->setCheckable(true);
+    m_pBtnOverlay->setFocusPolicy(Qt::NoFocus);
+    m_pBtnOverlay->setToolTip(QStringLiteral("Toggle Visual Overlay layer"));
+
+    m_pBtnRgbSplash = new QPushButton(QStringLiteral("RGB SPLASH"), m_pToolbarContainer);
+    m_pBtnRgbSplash->setCheckable(true);
+    m_pBtnRgbSplash->setFocusPolicy(Qt::NoFocus);
+    m_pBtnRgbSplash->setToolTip(QStringLiteral("Full-screen multi-color LED billboard text splash (Right-click to edit text)"));
+
+    row2->addWidget(m_pBtnCamDropdown, 2);
+    row2->addWidget(m_pBtnLowerThird, 2);
+    row2->addWidget(m_pBtnOverlay, 2);
+    row2->addWidget(m_pBtnRgbSplash, 2);
+
+    mainLayout->addLayout(row1);
+    mainLayout->addLayout(row2);
+
+    connect(m_pTransitionDropdown, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+        int code = m_pTransitionDropdown->itemData(index).toInt();
+        if (code >= 0 && code <= 4) {
+            setTransitionMode(static_cast<TransitionMode>(code));
+        } else if (code == 100) {
+            m_cueTransition = !m_cueTransition;
+            if (m_pCueTransitionControl) m_pCueTransitionControl->set(m_cueTransition ? 1.0 : 0.0);
+        } else if (code == 101) {
+            m_autoPlayEnabled = !m_autoPlayEnabled;
+            if (m_pAutoPlayControl) m_pAutoPlayControl->set(m_autoPlayEnabled ? 1.0 : 0.0);
+        } else if (code == 102) {
+            m_randomTransition = !m_randomTransition;
+            if (m_pRandomTransitionControl) m_pRandomTransitionControl->set(m_randomTransition ? 1.0 : 0.0);
+        } else if (code == 103) {
+            m_beatSyncEnabled = !m_beatSyncEnabled;
+            if (m_pBeatSyncControl) m_pBeatSyncControl->set(m_beatSyncEnabled ? 1.0 : 0.0);
+        }
+        syncToolbarStates();
+        update();
+    });
+
+    connect(m_pBtnFadeNow, &QPushButton::clicked, this, &MasterVideoWidget::triggerAutoTransition);
+    connect(m_pBtnProjector, &QPushButton::clicked, this, &MasterVideoWidget::toggleProjectorWindow);
+
+    connect(m_pBtnCamDropdown, &QPushButton::clicked, this, [this]() {
+        QMenu camMenu(this);
+        QAction* offAct = camMenu.addAction(QStringLiteral("Camera Off (Decks Only)"));
+        QAction* cam1Act = camMenu.addAction(QStringLiteral("Camera 1 (Built-in / USB)"));
+        QAction* cam2Act = camMenu.addAction(QStringLiteral("Camera 2 (External USB)"));
+        QAction* wifiAct = camMenu.addAction(QStringLiteral("Camera 3 (Wi-Fi Hotspot Stream)"));
+        offAct->setCheckable(true); offAct->setChecked(m_cameraSource == 0);
+        cam1Act->setCheckable(true); cam1Act->setChecked(m_cameraSource == 1);
+        cam2Act->setCheckable(true); cam2Act->setChecked(m_cameraSource == 2);
+        wifiAct->setCheckable(true); wifiAct->setChecked(m_cameraSource == 3);
+
+        QAction* chosen = camMenu.exec(m_pBtnCamDropdown->mapToGlobal(QPoint(0, m_pBtnCamDropdown->height())));
+        if (chosen == offAct) m_cameraSource = 0;
+        else if (chosen == cam1Act) m_cameraSource = 1;
+        else if (chosen == cam2Act) m_cameraSource = 2;
+        else if (chosen == wifiAct) m_cameraSource = 3;
+
+        if (m_pCameraSourceControl) {
+            m_pCameraSourceControl->set(static_cast<double>(m_cameraSource));
+        }
+        syncToolbarStates();
+        update();
+    });
+
+    connect(m_pBtnLowerThird, &QPushButton::toggled, this, [this](bool checked) {
+        m_lowerThirdEnabled = checked;
+        if (m_pLowerThirdControl) m_pLowerThirdControl->set(checked ? 1.0 : 0.0);
+        update();
+    });
+
+    connect(m_pBtnOverlay, &QPushButton::toggled, this, [this](bool checked) {
+        m_overlayEnabled = checked;
+        if (m_pOverlayControl) m_pOverlayControl->set(checked ? 1.0 : 0.0);
+        update();
+    });
+
+    connect(m_pBtnRgbSplash, &QPushButton::toggled, this, [this](bool checked) {
+        m_rgbSplashEnabled = checked;
+        if (m_pRgbSplashControl) m_pRgbSplashControl->set(checked ? 1.0 : 0.0);
+        update();
+    });
+
+    syncToolbarStates();
+    updateToolbarGeometry();
+}
+
+void MasterVideoWidget::syncToolbarStates() {
+    if (!m_pToolbarContainer) {
+        return;
+    }
+    int modeIdx = static_cast<int>(m_transition);
+    if (m_pTransitionDropdown && m_pTransitionDropdown->currentIndex() != modeIdx) {
+        m_pTransitionDropdown->setCurrentIndex(modeIdx);
+    }
+
+    if (m_pBtnCamDropdown) {
+        m_pBtnCamDropdown->setChecked(m_cameraSource > 0);
+        if (m_cameraSource == 0) m_pBtnCamDropdown->setText(QStringLiteral("CAM: OFF ▾"));
+        else if (m_cameraSource == 1) m_pBtnCamDropdown->setText(QStringLiteral("CAM 1 ▾"));
+        else if (m_cameraSource == 2) m_pBtnCamDropdown->setText(QStringLiteral("CAM 2 ▾"));
+        else m_pBtnCamDropdown->setText(QStringLiteral("WIFI CAM ▾"));
+    }
+
+    if (m_pBtnLowerThird) m_pBtnLowerThird->setChecked(m_lowerThirdEnabled);
+    if (m_pBtnOverlay) m_pBtnOverlay->setChecked(m_overlayEnabled);
+    if (m_pBtnRgbSplash) m_pBtnRgbSplash->setChecked(m_rgbSplashEnabled);
+    if (m_pBtnProjector) m_pBtnProjector->setChecked(m_pProjectorWindow && m_pProjectorWindow->isVisible());
+}
+
+void MasterVideoWidget::updateToolbarGeometry() {
+    if (!m_pToolbarContainer) {
+        return;
+    }
+    const int barHeight = 42;
+    int y = height() - barHeight - 2;
+    if (y < 0) {
+        y = 0;
+    }
+    m_pToolbarContainer->setGeometry(2, y, qMax(140, width() - 4), qMin(barHeight, height()));
+    m_pToolbarContainer->setVisible(m_toolbarPinned || underMouse());
+}
+
+void MasterVideoWidget::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    updateToolbarGeometry();
+}
+
+void MasterVideoWidget::enterEvent(QEvent* event) {
+    QWidget::enterEvent(event);
+    if (m_pToolbarContainer) {
+        m_pToolbarContainer->show();
+    }
+}
+
+void MasterVideoWidget::leaveEvent(QEvent* event) {
+    QWidget::leaveEvent(event);
+    if (m_pToolbarContainer && !m_toolbarPinned) {
+        m_pToolbarContainer->hide();
+    }
+}
+
+void MasterVideoWidget::editLowerThirdText() {
+    bool ok1 = false;
+    QString title = QInputDialog::getText(
+            this,
+            QStringLiteral("Lower Third Headline"),
+            QStringLiteral("Headline text:"),
+            QLineEdit::Normal,
+            m_lowerThirdTitle,
+            &ok1);
+    if (ok1 && !title.trimmed().isEmpty()) {
+        m_lowerThirdTitle = title.trimmed();
+    }
+
+    bool ok2 = false;
+    QString sub = QInputDialog::getText(
+            this,
+            QStringLiteral("Lower Third Subtitle"),
+            QStringLiteral("Subtitle / DJ Handle:"),
+            QLineEdit::Normal,
+            m_lowerThirdSubtitle,
+            &ok2);
+    if (ok2) {
+        m_lowerThirdSubtitle = sub.trimmed();
+    }
+    m_lowerThirdEnabled = true;
+    if (m_pLowerThirdControl) m_pLowerThirdControl->set(1.0);
+    update();
+}
+
+void MasterVideoWidget::editSplashText() {
+    bool ok = false;
+    QString txt = QInputDialog::getMultiLineText(
+            this,
+            QStringLiteral("RGB Billboard Splash Text"),
+            QStringLiteral("Enter full-screen billboard message:"),
+            m_rgbSplashText,
+            &ok);
+    if (ok && !txt.trimmed().isEmpty()) {
+        m_rgbSplashText = txt.trimmed();
+        m_rgbSplashEnabled = true;
+        if (m_pRgbSplashControl) m_pRgbSplashControl->set(1.0);
+        update();
+    }
+}
+
+void MasterVideoWidget::triggerAutoTransition() {
+    if (!m_pCrossfader) {
+        return;
+    }
+    if (m_randomTransition) {
+        int randMode = QRandomGenerator::global()->bounded(5);
+        setTransitionMode(static_cast<TransitionMode>(randMode));
+    }
+    double current = m_pCrossfader->get();
+    m_autoFadeStart = current;
+    m_autoFadeTarget = (current <= 0.0) ? 1.0 : -1.0;
+    m_autoFadeProgress = 0.0;
+    m_autoFadeActive = true;
+
+    if (m_autoPlayEnabled) {
+        if (m_autoFadeTarget > 0.0 && m_pPlay2 && m_pPlay2->get() < 0.5) {
+            m_pPlay2->set(1.0);
+        } else if (m_autoFadeTarget < 0.0 && m_pPlay1 && m_pPlay1->get() < 0.5) {
+            m_pPlay1->set(1.0);
+        }
+    }
+}
+
+void MasterVideoWidget::setTransitionMode(TransitionMode mode) {
+    m_transition = mode;
+    if (m_pTransitionControl) {
+        m_pTransitionControl->set(static_cast<double>(mode));
+    }
+    syncToolbarStates();
+    update();
+}
+
+void MasterVideoWidget::toggleProjectorWindow() {
+    if (m_pProjectorWindow && m_pProjectorWindow->isVisible()) {
+        m_pProjectorWindow->close();
+        syncToolbarStates();
+        return;
+    }
+
