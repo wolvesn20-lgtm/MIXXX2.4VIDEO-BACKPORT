@@ -4,13 +4,14 @@
 #include <QAction>
 #include <QCloseEvent>
 #include <QMenu>
+#include <QRandomGenerator>
 #include <QTimer>
 #include <QtGlobal>
 
 ProjectorWindow::ProjectorWindow(MasterVideoWidget* pMaster, QWidget* parent)
         : QWidget(parent, Qt::Window),
           m_pMaster(pMaster) {
-    setWindowTitle(QStringLiteral("Mixxx Master Video Output"));
+    setWindowTitle(QStringLiteral("Phoenix Master Video Output"));
     setAttribute(Qt::WA_OpaquePaintEvent);
     resize(1280, 720);
 }
@@ -19,7 +20,7 @@ void ProjectorWindow::paintEvent(QPaintEvent* event) {
     Q_UNUSED(event);
     QPainter painter(this);
     if (m_pMaster) {
-        m_pMaster->renderComposite(painter, rect());
+        m_pMaster->renderComposite(painter, rect(), true);
     } else {
         painter.fillRect(rect(), Qt::black);
     }
@@ -47,12 +48,60 @@ MasterVideoWidget::MasterVideoWidget(QWidget* parent)
     m_pCrossfader = new ControlProxy(ConfigKey("[Master]", "crossfader"), this);
     m_pVol1 = new ControlProxy(ConfigKey("[Channel1]", "volume"), this);
     m_pVol2 = new ControlProxy(ConfigKey("[Channel2]", "volume"), this);
+    m_pPlay1 = new ControlProxy(ConfigKey("[Channel1]", "play"), this);
+    m_pPlay2 = new ControlProxy(ConfigKey("[Channel2]", "play"), this);
 
     m_pTransitionControl = new ControlObject(ConfigKey("[Master]", "video_transition"));
     m_pTransitionControl->set(0.0);
 
     m_pUpfaderPreviewControl = new ControlObject(ConfigKey("[Master]", "video_upfader_preview"));
     m_pUpfaderPreviewControl->set(1.0);
+
+    m_pCueTransitionControl = new ControlObject(ConfigKey("[Master]", "video_transition_cue"));
+    m_pCueTransitionControl->set(0.0);
+
+    m_pAutoPlayControl = new ControlObject(ConfigKey("[Master]", "video_auto_play"));
+    m_pAutoPlayControl->set(1.0);
+
+    m_pRandomTransitionControl = new ControlObject(ConfigKey("[Master]", "video_random_transition"));
+    m_pRandomTransitionControl->set(0.0);
+
+    const QString btnStyle = QStringLiteral(
+            "QPushButton { background-color: rgba(20, 20, 24, 190); color: #E0E0E0; "
+            "border: 1px solid #555; border-radius: 3px; font-size: 10px; font-weight: bold; padding: 2px 6px; }"
+            "QPushButton:checked { background-color: #D9534F; color: white; border-color: #FF7675; }"
+            "QPushButton:hover { border-color: #FFA502; }");
+
+    m_pCueBtn = new QPushButton(QStringLiteral("CUE"), this);
+    m_pCueBtn->setCheckable(true);
+    m_pCueBtn->setStyleSheet(btnStyle);
+    m_pCueBtn->setToolTip(QStringLiteral("Cue Transition: Preview transition in Master without sending to Projector"));
+    connect(m_pCueBtn, &QPushButton::toggled, this, [this](bool checked) {
+        m_cueTransition = checked;
+        if (m_pCueTransitionControl) {
+            m_pCueTransitionControl->set(checked ? 1.0 : 0.0);
+        }
+        update();
+    });
+
+    m_pAutoTransBtn = new QPushButton(QStringLiteral("AUTO FADE"), this);
+    m_pAutoTransBtn->setStyleSheet(btnStyle);
+    m_pAutoTransBtn->setToolTip(QStringLiteral("Trigger smooth auto-transition between Deck 1 and Deck 2"));
+    connect(m_pAutoTransBtn, &QPushButton::clicked, this, &MasterVideoWidget::triggerAutoTransition);
+
+    m_pAutoPlayBtn = new QPushButton(QStringLiteral("AUTO PLAY"), this);
+    m_pAutoPlayBtn->setCheckable(true);
+    m_pAutoPlayBtn->setChecked(true);
+    m_pAutoPlayBtn->setStyleSheet(btnStyle);
+    m_pAutoPlayBtn->setToolTip(QStringLiteral("Auto-Play target deck video when transitioning"));
+    connect(m_pAutoPlayBtn, &QPushButton::toggled, this, [this](bool checked) {
+        m_autoPlayEnabled = checked;
+        if (m_pAutoPlayControl) {
+            m_pAutoPlayControl->set(checked ? 1.0 : 0.0);
+        }
+    });
+
+    updateOverlayLayout();
 
     QTimer* pRefreshTimer = new QTimer(this);
     connect(pRefreshTimer, &QTimer::timeout, this, [this]() {
@@ -66,6 +115,38 @@ MasterVideoWidget::MasterVideoWidget(QWidget* parent)
                 VideoWidget::setUpfaderPreviewEnabled(wantPreview);
             }
         }
+        if (m_pCueTransitionControl) {
+            bool wantCue = m_pCueTransitionControl->get() > 0.5;
+            if (wantCue != m_cueTransition) {
+                m_cueTransition = wantCue;
+                if (m_pCueBtn) {
+                    m_pCueBtn->setChecked(wantCue);
+                }
+            }
+        }
+        if (m_pAutoPlayControl) {
+            bool wantAutoPlay = m_pAutoPlayControl->get() > 0.5;
+            if (wantAutoPlay != m_autoPlayEnabled) {
+                m_autoPlayEnabled = wantAutoPlay;
+                if (m_pAutoPlayBtn) {
+                    m_pAutoPlayBtn->setChecked(wantAutoPlay);
+                }
+            }
+        }
+        if (m_pRandomTransitionControl) {
+            m_randomTransition = m_pRandomTransitionControl->get() > 0.5;
+        }
+
+        if (m_autoFadeActive && m_pCrossfader) {
+            m_autoFadeProgress += 0.025; // ~1.3s smooth transition at 30fps
+            if (m_autoFadeProgress >= 1.0) {
+                m_autoFadeProgress = 1.0;
+                m_autoFadeActive = false;
+            }
+            double nextXfader = m_autoFadeStart + (m_autoFadeTarget - m_autoFadeStart) * m_autoFadeProgress;
+            m_pCrossfader->set(nextXfader);
+        }
+
         update();
         if (m_pProjectorWindow && m_pProjectorWindow->isVisible()) {
             m_pProjectorWindow->update();
@@ -81,6 +162,55 @@ MasterVideoWidget::~MasterVideoWidget() {
     }
     delete m_pTransitionControl;
     delete m_pUpfaderPreviewControl;
+    delete m_pCueTransitionControl;
+    delete m_pAutoPlayControl;
+    delete m_pRandomTransitionControl;
+}
+
+void MasterVideoWidget::updateOverlayLayout() {
+    const int margin = 6;
+    const int btnH = 20;
+    int y = height() - btnH - margin;
+    if (y < margin) {
+        y = margin;
+    }
+    if (m_pCueBtn) {
+        m_pCueBtn->setGeometry(margin, y, 42, btnH);
+    }
+    if (m_pAutoTransBtn) {
+        m_pAutoTransBtn->setGeometry(margin + 46, y, 74, btnH);
+    }
+    if (m_pAutoPlayBtn) {
+        m_pAutoPlayBtn->setGeometry(width() - 74 - margin, y, 74, btnH);
+    }
+}
+
+void MasterVideoWidget::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    updateOverlayLayout();
+}
+
+void MasterVideoWidget::triggerAutoTransition() {
+    if (!m_pCrossfader) {
+        return;
+    }
+    if (m_randomTransition) {
+        int randMode = QRandomGenerator::global()->bounded(5);
+        setTransitionMode(static_cast<TransitionMode>(randMode));
+    }
+    double current = m_pCrossfader->get();
+    m_autoFadeStart = current;
+    m_autoFadeTarget = (current <= 0.0) ? 1.0 : -1.0;
+    m_autoFadeProgress = 0.0;
+    m_autoFadeActive = true;
+
+    if (m_autoPlayEnabled) {
+        if (m_autoFadeTarget > 0.0 && m_pPlay2 && m_pPlay2->get() < 0.5) {
+            m_pPlay2->set(1.0);
+        } else if (m_autoFadeTarget < 0.0 && m_pPlay1 && m_pPlay1->get() < 0.5) {
+            m_pPlay1->set(1.0);
+        }
+    }
 }
 
 void MasterVideoWidget::setTransitionMode(TransitionMode mode) {
@@ -124,150 +254,25 @@ void MasterVideoWidget::contextMenuEvent(QContextMenuEvent* event) {
                     : QStringLiteral("Pop Out Projector Window"));
     connect(popOutAct, &QAction::triggered, this, &MasterVideoWidget::toggleProjectorWindow);
 
-    QAction* faderPreviewAct = menu.addAction(QStringLiteral("Deck Preview Follows Upfaders"));
-    faderPreviewAct->setCheckable(true);
-    faderPreviewAct->setChecked(VideoWidget::isUpfaderPreviewEnabled());
-    connect(faderPreviewAct, &QAction::triggered, this, [this](bool checked) {
-        VideoWidget::setUpfaderPreviewEnabled(checked);
-        if (m_pUpfaderPreviewControl) {
-            m_pUpfaderPreviewControl->set(checked ? 1.0 : 0.0);
+    QAction* cueAct = menu.addAction(QStringLiteral("Cue Transition (Preview in Master Only)"));
+    cueAct->setCheckable(true);
+    cueAct->setChecked(m_cueTransition);
+    connect(cueAct, &QAction::triggered, this, [this](bool checked) {
+        m_cueTransition = checked;
+        if (m_pCueBtn) {
+            m_pCueBtn->setChecked(checked);
         }
+        if (m_pCueTransitionControl) {
+            m_pCueTransitionControl->set(checked ? 1.0 : 0.0);
+        }
+        update();
     });
 
-    menu.addSeparator();
-
-    struct ModeItem {
-        QString label;
-        TransitionMode mode;
-    };
-    const QList<ModeItem> modes = {
-            {QStringLiteral("Transition: Mix (Dissolve)"), TransitionMode::Mix},
-            {QStringLiteral("Transition: Wipe Horizontal"), TransitionMode::WipeHorizontal},
-            {QStringLiteral("Transition: Wipe Vertical"), TransitionMode::WipeVertical},
-            {QStringLiteral("Transition: Cut (Hard Switch)"), TransitionMode::Cut},
-            {QStringLiteral("Transition: Zoom Push"), TransitionMode::Zoom},
-    };
-
-    for (const auto& item : modes) {
-        QAction* act = menu.addAction(item.label);
-        act->setCheckable(true);
-        act->setChecked(m_transition == item.mode);
-        connect(act, &QAction::triggered, this, [this, item]() {
-            setTransitionMode(item.mode);
-        });
-    }
-
-    menu.exec(event->globalPos());
-}
-
-void MasterVideoWidget::paintEvent(QPaintEvent* event) {
-    Q_UNUSED(event);
-    QPainter painter(this);
-    renderComposite(painter, rect());
-}
-
-void MasterVideoWidget::drawCentered(
-        QPainter& painter,
-        const QRect& targetRect,
-        const QImage& img,
-        double opacity) {
-    if (img.isNull() || opacity <= 0.001) {
-        return;
-    }
-
-    QSize scaledSize = img.size().scaled(targetRect.size(), Qt::KeepAspectRatio);
-    int x = targetRect.x() + (targetRect.width() - scaledSize.width()) / 2;
-    int y = targetRect.y() + (targetRect.height() - scaledSize.height()) / 2;
-
-    painter.save();
-    painter.setOpacity(qBound(0.0, opacity, 1.0));
-    painter.drawImage(QRect(x, y, scaledSize.width(), scaledSize.height()), img);
-    painter.restore();
-}
-
-void MasterVideoWidget::renderComposite(QPainter& painter, const QRect& targetRect) {
-    painter.fillRect(targetRect, Qt::black);
-
-    VideoWidget* deck1 = VideoWidget::getDeckWidget(QStringLiteral("[Channel1]"));
-    VideoWidget* deck2 = VideoWidget::getDeckWidget(QStringLiteral("[Channel2]"));
-
-    QImage img1 = deck1 ? deck1->currentFrame() : QImage();
-    QImage img2 = deck2 ? deck2->currentFrame() : QImage();
-
-    double xfader = m_pCrossfader ? qBound(-1.0, m_pCrossfader->get(), 1.0) : 0.0;
-    double mix = (xfader + 1.0) * 0.5;
-    double vol1 = m_pVol1 ? qBound(0.0, m_pVol1->get(), 1.0) : 1.0;
-    double vol2 = m_pVol2 ? qBound(0.0, m_pVol2->get(), 1.0) : 1.0;
-
-    switch (m_transition) {
-        case TransitionMode::Mix: {
-            double op1 = vol1 * (xfader <= 0.0 ? 1.0 : (1.0 - xfader));
-            double op2 = vol2 * (xfader >= 0.0 ? 1.0 : (1.0 + xfader));
-            drawCentered(painter, targetRect, img1, op1);
-            drawCentered(painter, targetRect, img2, op2);
-            break;
+    QAction* autoPlayAct = menu.addAction(QStringLiteral("Auto-Play Deck on Transition"));
+    autoPlayAct->setCheckable(true);
+    autoPlayAct->setChecked(m_autoPlayEnabled);
+    connect(autoPlayAct, &QAction::triggered, this, [this](bool checked) {
+        m_autoPlayEnabled = checked;
+        if (m_pAutoPlayBtn) {
+            m_pAutoPlayBtn->setChecked(checked);
         }
-
-        case TransitionMode::Cut: {
-            if (xfader <= 0.0) {
-                drawCentered(painter, targetRect, img1, vol1);
-            } else {
-                drawCentered(painter, targetRect, img2, vol2);
-            }
-            break;
-        }
-
-        case TransitionMode::WipeHorizontal: {
-            int splitX = targetRect.x() + static_cast<int>(targetRect.width() * (1.0 - mix));
-            if (splitX > targetRect.x()) {
-                painter.save();
-                painter.setClipRect(QRect(targetRect.x(), targetRect.y(), splitX - targetRect.x(), targetRect.height()));
-                drawCentered(painter, targetRect, img1, vol1);
-                painter.restore();
-            }
-            if (splitX < targetRect.right()) {
-                painter.save();
-                painter.setClipRect(QRect(splitX, targetRect.y(), targetRect.right() - splitX + 1, targetRect.height()));
-                drawCentered(painter, targetRect, img2, vol2);
-                painter.restore();
-            }
-            break;
-        }
-
-        case TransitionMode::WipeVertical: {
-            int splitY = targetRect.y() + static_cast<int>(targetRect.height() * (1.0 - mix));
-            if (splitY > targetRect.y()) {
-                painter.save();
-                painter.setClipRect(QRect(targetRect.x(), targetRect.y(), targetRect.width(), splitY - targetRect.y()));
-                drawCentered(painter, targetRect, img1, vol1);
-                painter.restore();
-            }
-            if (splitY < targetRect.bottom()) {
-                painter.save();
-                painter.setClipRect(QRect(targetRect.x(), splitY, targetRect.width(), targetRect.bottom() - splitY + 1));
-                drawCentered(painter, targetRect, img2, vol2);
-                painter.restore();
-            }
-            break;
-        }
-
-        case TransitionMode::Zoom: {
-            double scale1 = 1.0 + (mix * 0.5);
-            QRect rect1(
-                    targetRect.center().x() - static_cast<int>(targetRect.width() * scale1 * 0.5),
-                    targetRect.center().y() - static_cast<int>(targetRect.height() * scale1 * 0.5),
-                    static_cast<int>(targetRect.width() * scale1),
-                    static_cast<int>(targetRect.height() * scale1));
-            drawCentered(painter, rect1, img1, vol1 * (1.0 - mix));
-
-            double scale2 = 0.5 + (mix * 0.5);
-            QRect rect2(
-                    targetRect.center().x() - static_cast<int>(targetRect.width() * scale2 * 0.5),
-                    targetRect.center().y() - static_cast<int>(targetRect.height() * scale2 * 0.5),
-                    static_cast<int>(targetRect.width() * scale2),
-                    static_cast<int>(targetRect.height() * scale2));
-            drawCentered(painter, rect2, img2, vol2 * mix);
-            break;
-        }
-    }
-}
