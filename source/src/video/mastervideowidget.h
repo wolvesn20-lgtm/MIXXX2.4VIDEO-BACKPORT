@@ -27,16 +27,15 @@ class ProjectorWindow : public QWidget {
   protected:
     void paintEvent(QPaintEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
-    void contextMenuEvent(QContextMenuEvent* event) override;
-    void resizeEvent(QResizeEvent* event) override;
-    void enterEvent(QEvent* event) override;
-    void leaveEvent(QEvent* event) override;
+    void closeEvent(QCloseEvent* event) override;
 
   signals:
     void windowClosed();
 
   private:
     MasterVideoWidget* m_pMaster{nullptr};
+    bool m_isCustomFullScreen{false};
+    QRect m_savedGeometry;
 };
 
 class MasterVideoWidget : public QWidget {
