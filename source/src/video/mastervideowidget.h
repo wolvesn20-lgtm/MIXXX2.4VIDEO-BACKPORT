@@ -67,7 +67,7 @@ class MasterVideoWidget : public QWidget {
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
-
+    
   private:
     void buildQuickToolbar();
     void syncToolbarStates();
