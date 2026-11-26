@@ -238,10 +238,6 @@ void MasterVideoWidget::buildQuickToolbar() {
     row1->addWidget(m_pBtnFadeNow, 1);
     row1->addWidget(m_pBtnProjector, 2);
 
-
-    QHBoxLayout* row2 = new QHBoxLayout();
-    row2->setSpacing(4);
-
     m_pBtnCamDropdown = new QPushButton(QStringLiteral("CAM: OFF ▾"), m_pToolbarContainer);
     m_pBtnCamDropdown->setCheckable(true);
     m_pBtnCamDropdown->setFocusPolicy(Qt::NoFocus);
@@ -415,6 +411,12 @@ void MasterVideoWidget::resizeEvent(QResizeEvent* event) {
     updateToolbarGeometry();
 }
 
+void MasterVideoWidget::enterEvent(QEvent* event) {
+    QWidget::enterEvent(event);
+    if (m_pToolbarContainer) {
+        m_pToolbarContainer->show();
+    }
+}
 void MasterVideoWidget::enterEvent(QEvent* event) {
     QWidget::enterEvent(event);
     if (m_pToolbarContainer) {
