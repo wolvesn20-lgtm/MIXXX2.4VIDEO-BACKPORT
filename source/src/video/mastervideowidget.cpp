@@ -33,10 +33,30 @@ void ProjectorWindow::paintEvent(QPaintEvent* event) {
 
 void ProjectorWindow::mouseDoubleClickEvent(QMouseEvent* event) {
     Q_UNUSED(event);
-    if (isFullScreen()) {
-        showNormal();
+    if (!m_isCustomFullScreen) {
+        m_savedGeometry = geometry();
+        m_isCustomFullScreen = true;
+
+        QScreen* pScreen = windowHandle() ? windowHandle()->screen() : QGuiApplication::primaryScreen();
+        QRect screenGeom = pScreen ? pScreen->geometry() : QRect(0, 0, 1280, 720);
+
+        setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
+        setGeometry(screenGeom);
+        show();
+        raise();
+        activateWindow();
     } else {
-        showFullScreen();
+        m_isCustomFullScreen = false;
+
+        setWindowFlags(Qt::Window);
+        if (m_savedGeometry.isValid()) {
+            setGeometry(m_savedGeometry);
+        } else {
+            resize(1280, 720);
+        }
+        show();
+        raise();
+        activateWindow();
     }
 }
 
@@ -191,6 +211,9 @@ void MasterVideoWidget::buildQuickToolbar() {
     mainLayout->setContentsMargins(4, 3, 4, 3);
     mainLayout->setSpacing(3);
 
+    QHBoxLayout* row1 = new QHBoxLayout();
+    row1->setSpacing(4);
+
     m_pTransitionDropdown = new QComboBox(m_pToolbarContainer);
     m_pTransitionDropdown->setFocusPolicy(Qt::NoFocus);
     m_pTransitionDropdown->addItem(QStringLiteral("Trans: Mix ▾"), static_cast<int>(TransitionMode::Mix));
@@ -200,7 +223,7 @@ void MasterVideoWidget::buildQuickToolbar() {
     m_pTransitionDropdown->addItem(QStringLiteral("Trans: Zoom ▾"), static_cast<int>(TransitionMode::Zoom));
     m_pTransitionDropdown->addItem(QStringLiteral("Option: Cue Preview"), 100);
     m_pTransitionDropdown->addItem(QStringLiteral("Option: Auto Play"), 101);
-    m_pTransitionDropdown->addItem(QStringLiteral("Option: Randomize"), 102);
+    m_pTransitionDropdown->addItem(QStringLiteral("Option: Random Trans"), 102);
     m_pTransitionDropdown->addItem(QStringLiteral("Option: Beat Sync"), 103);
 
     m_pBtnFadeNow = new QPushButton(QStringLiteral("FADE"), m_pToolbarContainer);
@@ -214,6 +237,7 @@ void MasterVideoWidget::buildQuickToolbar() {
     row1->addWidget(m_pTransitionDropdown, 3);
     row1->addWidget(m_pBtnFadeNow, 1);
     row1->addWidget(m_pBtnProjector, 2);
+
 
     QHBoxLayout* row2 = new QHBoxLayout();
     row2->setSpacing(4);
