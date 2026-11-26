@@ -28,7 +28,7 @@ class ProjectorWindow : public QWidget {
     void paintEvent(QPaintEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
-
+    
   signals:
     void windowClosed();
 
@@ -40,6 +40,9 @@ class ProjectorWindow : public QWidget {
 
 class MasterVideoWidget : public QWidget {
     Q_OBJECT
+protected:
+    void enterEvent(QEvent* event) override;
+    void leaveEvent(QEvent* event) override;
   public:
     enum class TransitionMode {
         Mix = 0,
