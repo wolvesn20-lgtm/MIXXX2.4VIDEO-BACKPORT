@@ -42,11 +42,33 @@ LaunchImage::LaunchImage(QWidget* pParent, const QString& styleSheet)
     m_pProgressBar = new QProgressBar(this);
     m_pProgressBar->setTextVisible(false);
 
+    QLabel* pTaglineLabel = new QLabel(
+            QStringLiteral("BUILT BY DJS, TESTED BY DJS, FOR DJS\nPOWERED BY THE NIGHT WOLVES ENTERTAINMENT"),
+            this);
+    pTaglineLabel->setAlignment(Qt::AlignCenter);
+    pTaglineLabel->setStyleSheet(QStringLiteral(
+            "QLabel {"
+            "  image: none;"
+            "  color: #E0F7FA;"
+            "  font-size: 11px;"
+            "  font-weight: bold;"
+            "  letter-spacing: 1px;"
+            "  background: transparent;"
+            "  border: none;"
+            "  min-width: 0px;"
+            "  max-width: 16777215px;"
+            "  min-height: 0px;"
+            "  max-height: 16777215px;"
+            "  padding-top: 8px;"
+            "  padding-bottom: 4px;"
+            "}"));
+
     QHBoxLayout* hbox = new QHBoxLayout(this);
     QVBoxLayout* vbox = new QVBoxLayout();
     vbox->addStretch();
     vbox->addWidget(label);
     vbox->addWidget(m_pProgressBar);
+    vbox->addWidget(pTaglineLabel);
     vbox->addStretch();
     hbox->addStretch();
     hbox->addLayout(vbox);
