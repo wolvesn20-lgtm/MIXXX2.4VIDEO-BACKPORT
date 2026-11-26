@@ -12,6 +12,7 @@
 #include <QVBoxLayout>
 #include <QtGlobal>
 #include <QtMath>
+#include <QScreen>
 
 ProjectorWindow::ProjectorWindow(MasterVideoWidget* pMaster, QWidget* parent)
         : QWidget(parent, Qt::Window),
