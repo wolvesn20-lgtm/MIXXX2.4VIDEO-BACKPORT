@@ -13,6 +13,9 @@
 
 #include "control/controlobject.h"
 #include "control/controlproxy.h"
+#include <QContextMenuEvent>
+#include <QEvent>
+#include <QImage>
 
 class MasterVideoWidget;
 
