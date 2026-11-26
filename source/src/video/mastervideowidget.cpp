@@ -191,9 +191,6 @@ void MasterVideoWidget::buildQuickToolbar() {
     mainLayout->setContentsMargins(4, 3, 4, 3);
     mainLayout->setSpacing(3);
 
-    QHBoxLayout* row1 = new QHBoxLayout();
-    row1->setSpacing(4);
-
     m_pTransitionDropdown = new QComboBox(m_pToolbarContainer);
     m_pTransitionDropdown->setFocusPolicy(Qt::NoFocus);
     m_pTransitionDropdown->addItem(QStringLiteral("Trans: Mix ▾"), static_cast<int>(TransitionMode::Mix));
