@@ -417,12 +417,6 @@ void MasterVideoWidget::enterEvent(QEvent* event) {
         m_pToolbarContainer->show();
     }
 }
-void MasterVideoWidget::enterEvent(QEvent* event) {
-    QWidget::enterEvent(event);
-    if (m_pToolbarContainer) {
-        m_pToolbarContainer->show();
-    }
-}
 
 void MasterVideoWidget::leaveEvent(QEvent* event) {
     QWidget::leaveEvent(event);
