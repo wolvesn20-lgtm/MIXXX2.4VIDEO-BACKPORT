@@ -27,7 +27,10 @@ class ProjectorWindow : public QWidget {
   protected:
     void paintEvent(QPaintEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
-    void closeEvent(QCloseEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void enterEvent(QEvent* event) override;
+    void leaveEvent(QEvent* event) override;
 
   signals:
     void windowClosed();
