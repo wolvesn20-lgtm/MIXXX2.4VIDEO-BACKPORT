@@ -317,36 +317,77 @@ void MasterVideoWidget::setupUniqueButtonContextMenus() {
     update();
 });
 
-void MasterVideoWidget::startCameraDevice(int deviceIndex) {
+void MasterVideoWidget::startWifiCamera(const QString& streamUrl) {
     stopCameraDevice();
-    const QList<QCameraInfo> cameras = QCameraInfo::availableCameras();
-    if (deviceIndex < 0 || deviceIndex >= cameras.size()) {
-        return;
+    if (!m_pNetManager) {
+        m_pNetManager = new QNetworkAccessManager(this);
     }
-    m_pCamera = new QCamera(cameras[deviceIndex], this);
-    m_pCameraGrabber = new CameraFrameGrabber(this);
-    connect(m_pCameraGrabber, &CameraFrameGrabber::frameAvailable, this, [this](const QImage& frame) {
-        m_latestCameraFrame = frame;
+
+    m_wifiCamUrl = streamUrl;
+    m_mjpegBuffer.clear();
+    m_cameraSource = 1;
+    if (m_pCameraSourceControl) {
+        m_pCameraSourceControl->set(1.0);
+    }
+
+    QNetworkRequest request{QUrl(m_wifiCamUrl)};
+    request.setRawHeader("User-Agent", "PhoenixVJ-Mixxx/2.4");
+    m_pWifiCamReply = m_pNetManager->get(request);
+
+    connect(m_pWifiCamReply, &QNetworkReply::readyRead, this, [this]() {
+        if (!m_pWifiCamReply) return;
+        m_mjpegBuffer.append(m_pWifiCamReply->readAll());
+
+        if (m_mjpegBuffer.size() > 2 * 1024 * 1024) {
+            m_mjpegBuffer.clear();
+            return;
+        }
+
+        const QByteArray soi("\xff\xd8", 2);
+        const QByteArray eoi("\xff\xd9", 2);
+
+        while (true) {
+            int start = m_mjpegBuffer.indexOf(soi);
+            if (start < 0) {
+                m_mjpegBuffer.clear();
+                break;
+            }
+            int end = m_mjpegBuffer.indexOf(eoi, start + 2);
+            if (end < 0) {
+                if (start > 0) m_mjpegBuffer.remove(0, start);
+                break;
+            }
+
+            QByteArray jpegData = m_mjpegBuffer.mid(start, (end + 2) - start);
+            m_mjpegBuffer.remove(0, end + 2);
+
+            QImage frame;
+            if (frame.loadFromData(jpegData, "JPEG")) {
+                m_latestCameraFrame = frame;
+            }
+        }
     });
-    m_pCamera->setViewfinder(m_pCameraGrabber);
-    m_pCamera->start();
-    m_cameraSource = deviceIndex + 1;
-    if (m_pCameraSourceControl) m_pCameraSourceControl->set(static_cast<double>(m_cameraSource));
+
+    connect(m_pWifiCamReply, &QNetworkReply::finished, this, [this]() {
+        if (m_pWifiCamReply) {
+            m_pWifiCamReply->deleteLater();
+            m_pWifiCamReply = nullptr;
+        }
+    });
 }
 
 void MasterVideoWidget::stopCameraDevice() {
-    if (m_pCamera) {
-        m_pCamera->stop();
-        delete m_pCamera;
-        m_pCamera = nullptr;
+    if (m_pWifiCamReply) {
+        m_pWifiCamReply->abort();
+        m_pWifiCamReply->deleteLater();
+        m_pWifiCamReply = nullptr;
     }
-    if (m_pCameraGrabber) {
-        delete m_pCameraGrabber;
-        m_pCameraGrabber = nullptr;
-    }
+    m_mjpegBuffer.clear();
     m_latestCameraFrame = QImage();
     m_cameraSource = 0;
-    if (m_pCameraSourceControl) m_pCameraSourceControl->set(0.0);
+    if (m_pCameraSourceControl) {
+        m_pCameraSourceControl->set(0.0);
+    }
 }
 
         syncToolbarStates();
