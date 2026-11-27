@@ -136,3 +136,13 @@ protected:
     QPushButton* m_pBtnOverlay{nullptr};
     QPushButton* m_pBtnRgbSplash{nullptr};
 };
+// Normalized positions (0.0 = top/left, 1.0 = bottom/right)
+QPointF m_lowerThirdPos = QPointF(0.05, 0.80); // Bottom-left default
+QPointF m_overlayTextPos = QPointF(0.50, 0.15); // Top-center default
+QPointF m_cameraPipPos  = QPointF(0.72, 0.05); // Top-right PiP default
+QSizeF  m_cameraPipSize = QSizeF(0.25, 0.25);  // 25% of canvas width/height
+
+enum class DragTarget { None, LowerThird, OverlayText, CameraPip };
+DragTarget m_dragTarget = DragTarget::None;
+QPointF m_dragOffset;
+};
