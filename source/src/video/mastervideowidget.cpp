@@ -118,6 +118,9 @@ MasterVideoWidget::MasterVideoWidget(QWidget* parent)
         if (m_pTransitionControl) {
             int modeVal = qBound(0, static_cast<int>(m_pTransitionControl->get()), 4);
             m_transition = static_cast<TransitionMode>(modeVal);
+                int modeVal = qBound(0, static_cast<int>(m_pTransitionControl->get()), 7);
+// and inside beatHit:
+int nextMode = QRandomGenerator::global()->bounded(8);
         }
         if (m_pUpfaderPreviewControl) {
             bool wantPreview = m_pUpfaderPreviewControl->get() > 0.5;
