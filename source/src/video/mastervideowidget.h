@@ -1,13 +1,14 @@
 #pragma once
 
-#include <QAbstractVideoSurface>
-#include <QCamera>
-#include <QCameraInfo>
+#include <QByteArray>
+#include <QColor>
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QEvent>
 #include <QImage>
 #include <QMouseEvent>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <QPaintEvent>
 #include <QPainter>
 #include <QPointF>
@@ -16,50 +17,12 @@
 #include <QResizeEvent>
 #include <QSizeF>
 #include <QString>
-#include <QVideoSurfaceFormat>
 #include <QWidget>
 
 #include "control/controlobject.h"
 #include "control/controlproxy.h"
 
 class MasterVideoWidget;
-
-// Helper class to grab live frames from QCamera in Qt5
-class CameraFrameGrabber : public QAbstractVideoSurface {
-    Q_OBJECT
-  public:
-    explicit CameraFrameGrabber(QObject* parent = nullptr) : QAbstractVideoSurface(parent) {}
-
-    QList<QVideoFrame::PixelFormat> supportedPixelFormats(
-            QAbstractVideoBuffer::HandleType handleType = QAbstractVideoBuffer::NoHandle) const override {
-        Q_UNUSED(handleType);
-        return {
-            QVideoFrame::Format_RGB32,
-            QVideoFrame::Format_ARGB32,
-            QVideoFrame::Format_RGB24,
-            QVideoFrame::Format_NV12,
-            QVideoFrame::Format_YUYV
-        };
-    }
-
-    bool present(const QVideoFrame& frame) override {
-        if (!frame.isValid()) return false;
-        QVideoFrame cloneFrame(frame);
-        if (cloneFrame.map(QAbstractVideoBuffer::ReadOnly)) {
-            QImage::Format imgFormat = QVideoFrame::imageFormatFromPixelFormat(cloneFrame.pixelFormat());
-            if (imgFormat != QImage::Format_Invalid) {
-                QImage img(cloneFrame.bits(), cloneFrame.width(), cloneFrame.height(),
-                           cloneFrame.bytesPerLine(), imgFormat);
-                emit frameAvailable(img.copy());
-            }
-            cloneFrame.unmap();
-        }
-        return true;
-    }
-
-  signals:
-    void frameAvailable(const QImage& frame);
-};
 
 class ProjectorWindow : public QWidget {
     Q_OBJECT
@@ -106,7 +69,7 @@ class MasterVideoWidget : public QWidget {
     void triggerAutoTransition();
     void editSplashText();
     void editLowerThirdText();
-    void startCameraDevice(int deviceIndex);
+    void startWifiCamera(const QString& streamUrl);
     void stopCameraDevice();
 
   protected:
@@ -159,11 +122,13 @@ class MasterVideoWidget : public QWidget {
     bool m_randomTransition{false};
     bool m_beatSyncEnabled{false};
 
-    // --- Camera State ---
-    int m_cameraSource{0}; // 0 = Off, >0 = index in QCameraInfo::availableCameras() + 1
+    // --- Wi-Fi Camera State ---
+    int m_cameraSource{0}; // 0 = Off, 1 = Wi-Fi Stream Active
     bool m_cameraPipMode{false};
-    QCamera* m_pCamera{nullptr};
-    CameraFrameGrabber* m_pCameraGrabber{nullptr};
+    QNetworkAccessManager* m_pNetManager{nullptr};
+    QNetworkReply* m_pWifiCamReply{nullptr};
+    QByteArray m_mjpegBuffer;
+    QString m_wifiCamUrl{QStringLiteral("http://192.168.43")};
     QImage m_latestCameraFrame;
 
     // --- REC State ---
