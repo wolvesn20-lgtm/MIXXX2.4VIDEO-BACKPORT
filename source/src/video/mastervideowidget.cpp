@@ -277,24 +277,42 @@ void MasterVideoWidget::setupUniqueButtonContextMenus() {
     });
 
     // 4. CAMERA Right-Click Menu
-    bindMenu(m_pBtnCamDropdown, [this](QMenu& menu) {
-        QAction* pip = menu.addAction(QStringLiteral("Picture-in-Picture (PiP) Overlay"));
-        pip->setCheckable(true);
-        pip->setChecked(m_cameraPipMode);
-        connect(pip, &QAction::triggered, this, [this](bool c) { m_cameraPipMode = c; update(); });
+    connect(m_pBtnCamDropdown, &QPushButton::clicked, this, [this]() {
+    QMenu camMenu(this);
+    QAction* offAct = camMenu.addAction(QStringLiteral("Camera Off (Decks Only)"));
+    offAct->setCheckable(true);
+    offAct->setChecked(m_cameraSource == 0);
 
-        QMenu* sizeMenu = menu.addMenu(QStringLiteral("PiP Box Size"));
-        sizeMenu->addAction(QStringLiteral("Small (20%)"), [this]() { m_cameraPipSize = QSizeF(0.20, 0.20); update(); });
-        sizeMenu->addAction(QStringLiteral("Medium (28%)"), [this]() { m_cameraPipSize = QSizeF(0.28, 0.28); update(); });
-        sizeMenu->addAction(QStringLiteral("Large (38%)"), [this]() { m_cameraPipSize = QSizeF(0.38, 0.38); update(); });
+    const QList<QCameraInfo> cameras = QCameraInfo::availableCameras();
+    QList<QAction*> camActions;
+    for (int i = 0; i < cameras.size(); ++i) {
+        QAction* act = camMenu.addAction(QStringLiteral("Cam %1: %2").arg(i + 1).arg(cameras[i].description()));
+        act->setCheckable(true);
+        act->setChecked(m_cameraSource == (i + 1));
+        camActions.append(act);
+    }
 
-        QMenu* posMenu = menu.addMenu(QStringLiteral("PiP Snap Corner"));
-        posMenu->addAction(QStringLiteral("Top Right"), [this]() { m_cameraPipPos = QPointF(0.70, 0.06); update(); });
-        posMenu->addAction(QStringLiteral("Top Left"), [this]() { m_cameraPipPos = QPointF(0.04, 0.06); update(); });
-        posMenu->addAction(QStringLiteral("Bottom Right"), [this]() { m_cameraPipPos = QPointF(0.70, 0.68); update(); });
-        posMenu->addAction(QStringLiteral("Bottom Left"), [this]() { m_cameraPipPos = QPointF(0.04, 0.68); update(); });
-    });
-}
+    camMenu.addSeparator();
+    QAction* pipAct = camMenu.addAction(QStringLiteral("Picture-in-Picture (PiP) Mode"));
+    pipAct->setCheckable(true);
+    pipAct->setChecked(m_cameraPipMode);
+
+    QAction* chosen = camMenu.exec(m_pBtnCamDropdown->mapToGlobal(QPoint(0, m_pBtnCamDropdown->height())));
+    if (!chosen) return;
+
+    if (chosen == offAct) {
+        stopCameraDevice();
+    } else if (chosen == pipAct) {
+        m_cameraPipMode = !m_cameraPipMode;
+    } else {
+        int idx = camActions.indexOf(chosen);
+        if (idx >= 0) {
+            startCameraDevice(idx);
+        }
+    }
+    syncToolbarStates();
+    update();
+});
 
 void MasterVideoWidget::startCameraDevice(int deviceIndex) {
     stopCameraDevice();
