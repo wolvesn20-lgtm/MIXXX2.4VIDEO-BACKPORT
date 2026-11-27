@@ -170,6 +170,163 @@ MasterVideoWidget::MasterVideoWidget(QWidget* parent)
             double nextXfader = m_autoFadeStart + (m_autoFadeTarget - m_autoFadeStart) * m_autoFadeProgress;
             m_pCrossfader->set(nextXfader);
         }
+void MasterVideoWidget::setupUniqueButtonContextMenus() {
+    auto bindMenu = [](QWidget* w, std::function<void(QMenu&)> builder) {
+        if (!w) return;
+        w->setContextMenuPolicy(Qt::CustomContextMenu);
+        QObject::connect(w, &QWidget::customContextMenuRequested, w, [w, builder](const QPoint& pos) {
+            QMenu menu(w);
+            builder(menu);
+            menu.exec(w->mapToGlobal(pos));
+        });
+    };
+
+    // 1. LOWER 3RD Right-Click Menu (Styles, Presets, Font, Scale, Color, Position)
+    bindMenu(m_pBtnLowerThird, [this](QMenu& menu) {
+        menu.addAction(QStringLiteral("Edit Lower Third Text..."), this, &MasterVideoWidget::editLowerThirdText);
+
+        QMenu* styleMenu = menu.addMenu(QStringLiteral("Banner Style"));
+        styleMenu->addAction(QStringLiteral("1. Phoenix Gradient Bar"), [this]() { m_lowerThirdStyle = 0; m_lowerThirdEnabled = true; update(); });
+        styleMenu->addAction(QStringLiteral("2. Rounded Club Pill"), [this]() { m_lowerThirdStyle = 1; m_lowerThirdEnabled = true; update(); });
+        styleMenu->addAction(QStringLiteral("3. Minimalist Accent Line"), [this]() { m_lowerThirdStyle = 2; m_lowerThirdEnabled = true; update(); });
+        styleMenu->addAction(QStringLiteral("4. Neon Glow Box"), [this]() { m_lowerThirdStyle = 3; m_lowerThirdEnabled = true; update(); });
+
+        QMenu* presetMenu = menu.addMenu(QStringLiteral("Quick Text Presets"));
+        presetMenu->addAction(QStringLiteral("PHOENIX LIVE / The Night Wolves Ent"), [this]() {
+            m_lowerThirdTitle = QStringLiteral("PHOENIX LIVE");
+            m_lowerThirdSubtitle = QStringLiteral("The Night Wolves Ent");
+            m_lowerThirdEnabled = true; update();
+        });
+        presetMenu->addAction(QStringLiteral("NOW MIXING / Live Video Set"), [this]() {
+            m_lowerThirdTitle = QStringLiteral("NOW MIXING");
+            m_lowerThirdSubtitle = QStringLiteral("Live Video Set");
+            m_lowerThirdEnabled = true; update();
+        });
+        presetMenu->addAction(QStringLiteral("REQUESTS OPEN / DM @NightWolves"), [this]() {
+            m_lowerThirdTitle = QStringLiteral("REQUESTS OPEN");
+            m_lowerThirdSubtitle = QStringLiteral("Shoutouts & Requests");
+            m_lowerThirdEnabled = true; update();
+        });
+
+        menu.addSeparator();
+        menu.addAction(QStringLiteral("Choose Font..."), [this]() {
+            bool ok = false;
+            QFont f = QFontDialog::getFont(&ok, QFont(m_lowerThirdFontFamily, 16), this);
+            if (ok) { m_lowerThirdFontFamily = f.family(); update(); }
+        });
+        menu.addAction(QStringLiteral("Choose Accent Color..."), [this]() {
+            QColor c = QColorDialog::getColor(m_lowerThirdAccentColor, this);
+            if (c.isValid()) { m_lowerThirdAccentColor = c; update(); }
+        });
+
+        QMenu* scaleMenu = menu.addMenu(QStringLiteral("Text & Banner Scale"));
+        for (double s : {0.75, 1.0, 1.25, 1.5}) {
+            scaleMenu->addAction(QStringLiteral("%1%").arg(qRound(s * 100)), [this, s]() { m_lowerThirdScale = s; update(); });
+        }
+
+        QMenu* posMenu = menu.addMenu(QStringLiteral("Snap Position"));
+        posMenu->addAction(QStringLiteral("Bottom Left"), [this]() { m_lowerThirdPos = QPointF(0.04, 0.78); update(); });
+        posMenu->addAction(QStringLiteral("Bottom Center"), [this]() { m_lowerThirdPos = QPointF(0.19, 0.78); update(); });
+        posMenu->addAction(QStringLiteral("Bottom Right"), [this]() { m_lowerThirdPos = QPointF(0.34, 0.78); update(); });
+        posMenu->addAction(QStringLiteral("Top Left"), [this]() { m_lowerThirdPos = QPointF(0.04, 0.06); update(); });
+    });
+
+    // 2. OVERLAY Right-Click Menu
+    bindMenu(m_pBtnOverlay, [this](QMenu& menu) {
+        menu.addAction(QStringLiteral("Style: RGB Neon Border"), [this]() { m_overlayStyle = 0; m_overlayEnabled = true; update(); });
+        menu.addAction(QStringLiteral("Style: Retro CRT Scanlines"), [this]() { m_overlayStyle = 1; m_overlayEnabled = true; update(); });
+        menu.addAction(QStringLiteral("Style: Floating Watermark Text"), [this]() { m_overlayStyle = 2; m_overlayEnabled = true; update(); });
+        menu.addSeparator();
+        menu.addAction(QStringLiteral("Edit Watermark Text..."), [this]() {
+            bool ok = false;
+            QString t = QInputDialog::getText(this, QStringLiteral("Watermark Text"), QStringLiteral("Text:"), QLineEdit::Normal, m_overlayText, &ok);
+            if (ok && !t.trimmed().isEmpty()) { m_overlayText = t.trimmed(); m_overlayStyle = 2; m_overlayEnabled = true; update(); }
+        });
+        menu.addAction(QStringLiteral("Choose Watermark Font..."), [this]() {
+            bool ok = false;
+            QFont f = QFontDialog::getFont(&ok, QFont(m_overlayFontFamily, 16), this);
+            if (ok) { m_overlayFontFamily = f.family(); update(); }
+        });
+        menu.addAction(QStringLiteral("Choose Watermark Color..."), [this]() {
+            QColor c = QColorDialog::getColor(m_overlayColor, this);
+            if (c.isValid()) { m_overlayColor = c; update(); }
+        });
+        QMenu* scaleMenu = menu.addMenu(QStringLiteral("Watermark Scale"));
+        for (double s : {0.75, 1.0, 1.35, 1.75}) {
+            scaleMenu->addAction(QStringLiteral("%1%").arg(qRound(s * 100)), [this, s]() { m_overlayScale = s; update(); });
+        }
+        QMenu* posMenu = menu.addMenu(QStringLiteral("Watermark Position"));
+        posMenu->addAction(QStringLiteral("Top Right"), [this]() { m_overlayTextPos = QPointF(0.72, 0.06); update(); });
+        posMenu->addAction(QStringLiteral("Top Left"), [this]() { m_overlayTextPos = QPointF(0.04, 0.06); update(); });
+        posMenu->addAction(QStringLiteral("Bottom Right"), [this]() { m_overlayTextPos = QPointF(0.72, 0.85); update(); });
+        posMenu->addAction(QStringLiteral("Center"), [this]() { m_overlayTextPos = QPointF(0.38, 0.45); update(); });
+    });
+
+    // 3. RGB SPLASH Right-Click Menu
+    bindMenu(m_pBtnRgbSplash, [this](QMenu& menu) {
+        menu.addAction(QStringLiteral("Edit Billboard Message..."), this, &MasterVideoWidget::editSplashText);
+        menu.addAction(QStringLiteral("Choose Billboard Font..."), [this]() {
+            bool ok = false;
+            QFont f = QFontDialog::getFont(&ok, QFont(m_rgbSplashFontFamily, 18), this);
+            if (ok) { m_rgbSplashFontFamily = f.family(); update(); }
+        });
+        QMenu* scaleMenu = menu.addMenu(QStringLiteral("LED Matrix Density / Scale"));
+        scaleMenu->addAction(QStringLiteral("Fine LEDs (High Res)"), [this]() { m_rgbSplashScale = 1.4; update(); });
+        scaleMenu->addAction(QStringLiteral("Standard LEDs"), [this]() { m_rgbSplashScale = 1.0; update(); });
+        scaleMenu->addAction(QStringLiteral("Chunky Club LEDs"), [this]() { m_rgbSplashScale = 0.7; update(); });
+    });
+
+    // 4. CAMERA Right-Click Menu
+    bindMenu(m_pBtnCamDropdown, [this](QMenu& menu) {
+        QAction* pip = menu.addAction(QStringLiteral("Picture-in-Picture (PiP) Overlay"));
+        pip->setCheckable(true);
+        pip->setChecked(m_cameraPipMode);
+        connect(pip, &QAction::triggered, this, [this](bool c) { m_cameraPipMode = c; update(); });
+
+        QMenu* sizeMenu = menu.addMenu(QStringLiteral("PiP Box Size"));
+        sizeMenu->addAction(QStringLiteral("Small (20%)"), [this]() { m_cameraPipSize = QSizeF(0.20, 0.20); update(); });
+        sizeMenu->addAction(QStringLiteral("Medium (28%)"), [this]() { m_cameraPipSize = QSizeF(0.28, 0.28); update(); });
+        sizeMenu->addAction(QStringLiteral("Large (38%)"), [this]() { m_cameraPipSize = QSizeF(0.38, 0.38); update(); });
+
+        QMenu* posMenu = menu.addMenu(QStringLiteral("PiP Snap Corner"));
+        posMenu->addAction(QStringLiteral("Top Right"), [this]() { m_cameraPipPos = QPointF(0.70, 0.06); update(); });
+        posMenu->addAction(QStringLiteral("Top Left"), [this]() { m_cameraPipPos = QPointF(0.04, 0.06); update(); });
+        posMenu->addAction(QStringLiteral("Bottom Right"), [this]() { m_cameraPipPos = QPointF(0.70, 0.68); update(); });
+        posMenu->addAction(QStringLiteral("Bottom Left"), [this]() { m_cameraPipPos = QPointF(0.04, 0.68); update(); });
+    });
+}
+
+void MasterVideoWidget::startCameraDevice(int deviceIndex) {
+    stopCameraDevice();
+    const QList<QCameraInfo> cameras = QCameraInfo::availableCameras();
+    if (deviceIndex < 0 || deviceIndex >= cameras.size()) {
+        return;
+    }
+    m_pCamera = new QCamera(cameras[deviceIndex], this);
+    m_pCameraGrabber = new CameraFrameGrabber(this);
+    connect(m_pCameraGrabber, &CameraFrameGrabber::frameAvailable, this, [this](const QImage& frame) {
+        m_latestCameraFrame = frame;
+    });
+    m_pCamera->setViewfinder(m_pCameraGrabber);
+    m_pCamera->start();
+    m_cameraSource = deviceIndex + 1;
+    if (m_pCameraSourceControl) m_pCameraSourceControl->set(static_cast<double>(m_cameraSource));
+}
+
+void MasterVideoWidget::stopCameraDevice() {
+    if (m_pCamera) {
+        m_pCamera->stop();
+        delete m_pCamera;
+        m_pCamera = nullptr;
+    }
+    if (m_pCameraGrabber) {
+        delete m_pCameraGrabber;
+        m_pCameraGrabber = nullptr;
+    }
+    m_latestCameraFrame = QImage();
+    m_cameraSource = 0;
+    if (m_pCameraSourceControl) m_pCameraSourceControl->set(0.0);
+}
 
         syncToolbarStates();
         update();
@@ -592,97 +749,176 @@ void MasterVideoWidget::drawCentered(
 
 void MasterVideoWidget::renderCameraLayer(QPainter& painter, const QRect& targetRect) {
     if (m_cameraSource <= 0) {
+        m_lastCameraPipRect = QRect();
         return;
     }
+
+    QRect drawRect = targetRect;
+    if (m_cameraPipMode) {
+        int pipW = qRound(targetRect.width() * m_cameraPipSize.width());
+        int pipH = qRound(targetRect.height() * m_cameraPipSize.height());
+        int pipX = targetRect.left() + qRound(m_cameraPipPos.x() * targetRect.width());
+        int pipY = targetRect.top() + qRound(m_cameraPipPos.y() * targetRect.height());
+        drawRect = QRect(pipX, pipY, pipW, pipH);
+        m_lastCameraPipRect = drawRect;
+    } else {
+        m_lastCameraPipRect = QRect();
+    }
+
     painter.save();
-    QLinearGradient bgGrad(targetRect.topLeft(), targetRect.bottomRight());
-    bgGrad.setColorAt(0.0, QColor(12, 24, 38));
-    bgGrad.setColorAt(1.0, QColor(28, 14, 42));
-    painter.fillRect(targetRect, bgGrad);
+    if (!m_latestCameraFrame.isNull()) {
+        drawCentered(painter, drawRect, m_latestCameraFrame, 1.0);
+    } else {
+        painter.fillRect(drawRect, QColor(14, 18, 28));
+        painter.setPen(Qt::white);
+        painter.drawText(drawRect, Qt::AlignCenter, QStringLiteral("CONNECTING CAMERA..."));
+    }
 
-    painter.setPen(QColor(255, 255, 255, 210));
-    QFont f = painter.font();
-    f.setPointSize(qMax(10, targetRect.height() / 16));
-    f.setBold(true);
-    painter.setFont(f);
-
-    QString camLabel = (m_cameraSource == 1)
-            ? QStringLiteral("LIVE CAMERA 1 FEED")
-            : (m_cameraSource == 2)
-                    ? QStringLiteral("LIVE CAMERA 2 FEED")
-                    : QStringLiteral("WI-FI HOTSPOT CAMERA STREAM");
-    painter.drawText(targetRect, Qt::AlignCenter, camLabel);
+    if (m_cameraPipMode) {
+        painter.setPen(QPen(m_lowerThirdAccentColor, qMax(2, targetRect.width() / 320)));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(drawRect);
+    }
     painter.restore();
 }
 
 void MasterVideoWidget::renderOverlayLayer(QPainter& painter, const QRect& targetRect) {
     if (!m_overlayEnabled) {
+        m_lastOverlayTextRect = QRect();
         return;
     }
     painter.save();
+    double scale = qMax(0.25, static_cast<double>(targetRect.height()) / 720.0) * m_overlayScale;
+
     if (m_overlayStyle == 0) {
+        m_lastOverlayTextRect = QRect();
         QColor neon = QColor::fromHsv(m_rgbPhase, 255, 255);
-        QPen pen(neon, qMax(3, targetRect.width() / 160));
+        QPen pen(neon, qMax(3, qRound(6.0 * scale)));
         painter.setPen(pen);
         painter.drawRect(targetRect.adjusted(6, 6, -6, -6));
     } else if (m_overlayStyle == 1) {
+        m_lastOverlayTextRect = QRect();
         painter.setPen(QColor(0, 0, 0, 75));
         for (int y = targetRect.top(); y < targetRect.bottom(); y += 4) {
             painter.drawLine(targetRect.left(), y, targetRect.right(), y);
         }
     } else {
-        painter.setPen(QColor(255, 165, 0, 190));
-        QFont f = painter.font();
-        f.setPointSize(qMax(9, targetRect.height() / 22));
+        QFont f(m_overlayFontFamily);
+        f.setPixelSize(qMax(10, qRound(28.0 * scale)));
         f.setBold(true);
         painter.setFont(f);
-        painter.drawText(targetRect.adjusted(12, 10, -12, -10), Qt::AlignTop | Qt::AlignRight, QStringLiteral("PHOENIX VJ"));
+
+        QFontMetrics fm(f);
+        int textW = fm.horizontalAdvance(m_overlayText) + qRound(16.0 * scale);
+        int textH = fm.height() + qRound(8.0 * scale);
+        int x = targetRect.left() + qRound(m_overlayTextPos.x() * targetRect.width());
+        int y = targetRect.top() + qRound(m_overlayTextPos.y() * targetRect.height());
+
+        m_lastOverlayTextRect = QRect(x, y, textW, textH);
+        painter.setPen(m_overlayColor);
+        painter.drawText(m_lastOverlayTextRect, Qt::AlignCenter, m_overlayText);
     }
     painter.restore();
 }
 
 void MasterVideoWidget::renderLowerThirdLayer(QPainter& painter, const QRect& targetRect) {
     if (!m_lowerThirdEnabled) {
+        m_lastLowerThirdRect = QRect();
         return;
     }
     painter.save();
-    int barH = qMax(34, targetRect.height() / 6);
-    int barW = static_cast<int>(targetRect.width() * 0.62);
-    int x = targetRect.left() + static_cast<int>(targetRect.width() * 0.04);
-    int y = targetRect.bottom() - barH - static_cast<int>(targetRect.height() * 0.14);
+    double scale = qMax(0.25, static_cast<double>(targetRect.height()) / 720.0) * m_lowerThirdScale;
+
+    int barH = qMax(32, qRound(92.0 * scale));
+    int barW = qBound(140, qRound(targetRect.width() * 0.60 * m_lowerThirdScale), qRound(targetRect.width() * 0.92));
+    int x = targetRect.left() + qRound(m_lowerThirdPos.x() * targetRect.width());
+    int y = targetRect.top() + qRound(m_lowerThirdPos.y() * targetRect.height());
 
     QRect bannerRect(x, y, barW, barH);
-    QLinearGradient grad(bannerRect.topLeft(), bannerRect.topRight());
-    grad.setColorAt(0.0, QColor(232, 93, 4, 230));
-    grad.setColorAt(0.7, QColor(20, 20, 28, 225));
-    grad.setColorAt(1.0, QColor(20, 20, 28, 0));
+    m_lastLowerThirdRect = bannerRect;
+
+    if (m_lowerThirdStyle == 1) {
+        // Style 1: Rounded Club Pill
+        painter.setPen(QPen(m_lowerThirdAccentColor, qMax(2, qRound(3.0 * scale))));
+        painter.setBrush(QColor(15, 15, 22, 225));
+        painter.drawRoundedRect(bannerRect, barH / 2.0, barH / 2.0);
+    } else if (m_lowerThirdStyle == 2) {
+        // Style 2: Minimalist Accent Line
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(m_lowerThirdAccentColor);
+        painter.drawRect(QRect(x, y, qMax(4, qRound(6.0 * scale)), barH));
+    } else if (m_lowerThirdStyle == 3) {
+        // Style 3: Neon Glow Box
+        QColor neon = QColor::fromHsv(m_rgbPhase, 255, 255);
+        painter.setPen(QPen(neon, qMax(2, qRound(3.0 * scale))));
+        painter.setBrush(QColor(10, 10, 16, 215));
+        painter.drawRect(bannerRect);
+    } else {
+        // Style 0: Default Phoenix Gradient Bar
+        QLinearGradient grad(bannerRect.topLeft(), bannerRect.topRight());
+        grad.setColorAt(0.0, QColor(m_lowerThirdAccentColor.red(), m_lowerThirdAccentColor.green(), m_lowerThirdAccentColor.blue(), 230));
+        grad.setColorAt(0.7, QColor(20, 20, 28, 225));
+        grad.setColorAt(1.0, QColor(20, 20, 28, 0));
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(grad);
+        painter.drawRoundedRect(bannerRect, 4, 4);
+
+        painter.setBrush(QColor::fromHsv(m_rgbPhase, 240, 255));
+        painter.drawRect(QRect(x, y, qMax(3, qRound(5.0 * scale)), barH));
+    }
+
+    int padLeft = qRound(16.0 * scale);
+    int maxTextW = barW - padLeft - qRound(12.0 * scale);
+
+    // Title Font with Auto-Fit Shrinking
+    QFont titleFont(m_lowerThirdFontFamily);
+    titleFont.setPixelSize(qMax(10, qRound(32.0 * scale)));
+    titleFont.setBold(true);
+    QFontMetrics fmTitle(titleFont);
+    if (fmTitle.horizontalAdvance(m_lowerThirdTitle) > maxTextW && maxTextW > 20) {
+        double ratio = static_cast<double>(maxTextW) / fmTitle.horizontalAdvance(m_lowerThirdTitle);
+        titleFont.setPixelSize(qMax(9, qRound(titleFont.pixelSize() * ratio)));
+    }
+    painter.setPen(Qt::white);
+    painter.setFont(titleFont);
+    painter.drawText(QRect(x + padLeft, y + 2, maxTextW, barH / 2), Qt::AlignLeft | Qt::AlignVCenter, m_lowerThirdTitle);
+
+    // Subtitle Font with Auto-Fit Shrinking
+    QFont subFont(m_lowerThirdFontFamily);
+    subFont.setPixelSize(qMax(8, qRound(20.0 * scale)));
+    QFontMetrics fmSub(subFont);
+    if (fmSub.horizontalAdvance(m_lowerThirdSubtitle) > maxTextW && maxTextW > 20) {
+        double ratio = static_cast<double>(maxTextW) / fmSub.horizontalAdvance(m_lowerThirdSubtitle);
+        subFont.setPixelSize(qMax(8, qRound(subFont.pixelSize() * ratio)));
+    }
+    painter.setPen(QColor(255, 220, 160));
+    painter.setFont(subFont);
+    painter.drawText(QRect(x + padLeft, y + (barH / 2), maxTextW, barH / 2 - 2), Qt::AlignLeft | Qt::AlignVCenter, m_lowerThirdSubtitle);
+    painter.restore();
+}
+
+void MasterVideoWidget::renderRecBadge(QPainter& painter, const QRect& targetRect) {
+    if (!m_isRecording) return;
+    painter.save();
+    double scale = qMax(0.3, static_cast<double>(targetRect.height()) / 720.0);
+    int badgeW = qRound(95.0 * scale);
+    int badgeH = qRound(30.0 * scale);
+    QRect badgeRect(targetRect.left() + qRound(16.0 * scale), targetRect.top() + qRound(16.0 * scale), badgeW, badgeH);
 
     painter.setPen(Qt::NoPen);
-    painter.setBrush(grad);
-    painter.drawRoundedRect(bannerRect, 4, 4);
+    painter.setBrush(QColor(15, 15, 20, 200));
+    painter.drawRoundedRect(badgeRect, 6, 6);
 
-    painter.setBrush(QColor::fromHsv(m_rgbPhase, 240, 255));
-    painter.drawRect(QRect(x, y, 4, barH));
+    // Pulsing red dot
+    int alpha = (m_rgbPhase % 180 < 90) ? 255 : 90;
+    painter.setBrush(QColor(230, 20, 20, alpha));
+    int dotSize = qRound(12.0 * scale);
+    painter.drawEllipse(badgeRect.left() + qRound(10.0 * scale), badgeRect.center().y() - dotSize / 2, dotSize, dotSize);
 
     painter.setPen(Qt::white);
-    QFont titleFont = painter.font();
-    titleFont.setPointSize(qMax(9, barH / 3));
-    titleFont.setBold(true);
-    painter.setFont(titleFont);
-    painter.drawText(
-            QRect(x + 12, y + 2, barW - 16, barH / 2),
-            Qt::AlignLeft | Qt::AlignVCenter,
-            m_lowerThirdTitle);
-
-    painter.setPen(QColor(255, 200, 120));
-    QFont subFont = painter.font();
-    subFont.setPointSize(qMax(7, barH / 4));
-    subFont.setBold(false);
-    painter.setFont(subFont);
-    painter.drawText(
-            QRect(x + 12, y + (barH / 2), barW - 16, barH / 2 - 2),
-            Qt::AlignLeft | Qt::AlignVCenter,
-            m_lowerThirdSubtitle);
+    QFont f(QStringLiteral("Arial"), qMax(8, qRound(14.0 * scale)), QFont::Bold);
+    painter.setFont(f);
+    painter.drawText(badgeRect.adjusted(dotSize + qRound(14.0 * scale), 0, -4, 0), Qt::AlignVCenter | Qt::AlignLeft, QStringLiteral("REC"));
     painter.restore();
 }
 
@@ -753,106 +989,9 @@ void MasterVideoWidget::renderRgbSplashLayer(QPainter& painter, const QRect& tar
     }
 
     painter.restore();
+  }
+
 }
-
-void MasterVideoWidget::renderComposite(QPainter& painter, const QRect& targetRect, bool isProjectorOutput) {
-    painter.fillRect(targetRect, Qt::black);
-
-    if (m_cameraSource > 0) {
-        renderCameraLayer(painter, targetRect);
-    } else {
-        VideoWidget* deck1 = VideoWidget::getDeckWidget(QStringLiteral("[Channel1]"));
-        VideoWidget* deck2 = VideoWidget::getDeckWidget(QStringLiteral("[Channel2]"));
-
-        QImage img1 = deck1 ? deck1->currentFrame() : QImage();
-        QImage img2 = deck2 ? deck2->currentFrame() : QImage();
-
-        double xfader = m_pCrossfader ? qBound(-1.0, m_pCrossfader->get(), 1.0) : 0.0;
-        double mix = (xfader + 1.0) * 0.5;
-        double vol1 = m_pVol1 ? qBound(0.0, m_pVol1->get(), 1.0) : 1.0;
-        double vol2 = m_pVol2 ? qBound(0.0, m_pVol2->get(), 1.0) : 1.0;
-
-        if (isProjectorOutput && m_cueTransition) {
-            if (xfader <= 0.0) {
-                drawCentered(painter, targetRect, img1, vol1);
-            } else {
-                drawCentered(painter, targetRect, img2, vol2);
-            }
-        } else {
-            switch (m_transition) {
-                case TransitionMode::Mix: {
-                    double op1 = vol1 * (xfader <= 0.0 ? 1.0 : (1.0 - xfader));
-                    double op2 = vol2 * (xfader >= 0.0 ? 1.0 : (1.0 + xfader));
-                    drawCentered(painter, targetRect, img1, op1);
-                    drawCentered(painter, targetRect, img2, op2);
-                    break;
-                }
-                case TransitionMode::Cut: {
-                    if (xfader <= 0.0) {
-                        drawCentered(painter, targetRect, img1, vol1);
-                    } else {
-                        drawCentered(painter, targetRect, img2, vol2);
-                    }
-                    break;
-                }
-                case TransitionMode::WipeHorizontal: {
-                    int splitX = targetRect.x() + static_cast<int>(targetRect.width() * (1.0 - mix));
-                    if (splitX > targetRect.x()) {
-                        painter.save();
-                        painter.setClipRect(QRect(targetRect.x(), targetRect.y(), splitX - targetRect.x(), targetRect.height()));
-                        drawCentered(painter, targetRect, img1, vol1);
-                        painter.restore();
-                    }
-                    if (splitX < targetRect.right()) {
-                        painter.save();
-                        painter.setClipRect(QRect(splitX, targetRect.y(), targetRect.right() - splitX + 1, targetRect.height()));
-                        drawCentered(painter, targetRect, img2, vol2);
-                        painter.restore();
-                    }
-                    break;
-                }
-                case TransitionMode::WipeVertical: {
-                    int splitY = targetRect.y() + static_cast<int>(targetRect.height() * (1.0 - mix));
-                    if (splitY > targetRect.y()) {
-                        painter.save();
-                        painter.setClipRect(QRect(targetRect.x(), targetRect.y(), targetRect.width(), splitY - targetRect.y()));
-                        drawCentered(painter, targetRect, img1, vol1);
-                        painter.restore();
-                    }
-                    if (splitY < targetRect.bottom()) {
-                        painter.save();
-                        painter.setClipRect(QRect(targetRect.x(), splitY, targetRect.width(), targetRect.bottom() - splitY + 1));
-                        drawCentered(painter, targetRect, img2, vol2);
-                        painter.restore();
-                    }
-                    break;
-                }
-                case TransitionMode::Zoom: {
-                    double scale1 = 1.0 + (mix * 0.5);
-                    QRect rect1(
-                            targetRect.center().x() - static_cast<int>(targetRect.width() * scale1 * 0.5),
-                            targetRect.center().y() - static_cast<int>(targetRect.height() * scale1 * 0.5),
-                            static_cast<int>(targetRect.width() * scale1),
-                            static_cast<int>(targetRect.height() * scale1));
-                    drawCentered(painter, rect1, img1, vol1 * (1.0 - mix));
-
-                    double scale2 = 0.5 + (mix * 0.5);
-                    QRect rect2(
-                            targetRect.center().x() - static_cast<int>(targetRect.width() * scale2 * 0.5),
-                            targetRect.center().y() - static_cast<int>(targetRect.height() * scale2 * 0.5),
-                            static_cast<int>(targetRect.width() * scale2),
-                            static_cast<int>(targetRect.height() * scale2));
-                    drawCentered(painter, rect2, img2, vol2 * mix);
-                    break;
-                }
-            }
-        }
-    }
-
-    renderOverlayLayer(painter, targetRect);
-    renderLowerThirdLayer(painter, targetRect);
-    renderRgbSplashLayer(painter, targetRect);
-
     if (!isProjectorOutput && m_cueTransition) {
         painter.save();
         painter.setPen(Qt::NoPen);
@@ -866,4 +1005,51 @@ void MasterVideoWidget::renderComposite(QPainter& painter, const QRect& targetRe
         painter.drawText(QRect(targetRect.x() + 6, targetRect.y() + 6, 74, 16), Qt::AlignCenter, QStringLiteral("CUE PREVIEW"));
         painter.restore();
     }
+}
+void MasterVideoWidget::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton) {
+        if (m_lowerThirdEnabled && m_lastLowerThirdRect.contains(event->pos())) {
+            m_dragTarget = DragTarget::LowerThird;
+            m_dragOffset = QPointF(event->pos() - m_lastLowerThirdRect.topLeft());
+            setCursor(Qt::ClosedHandCursor);
+            return;
+        }
+        if (m_overlayEnabled && m_overlayStyle == 2 && m_lastOverlayTextRect.contains(event->pos())) {
+            m_dragTarget = DragTarget::OverlayText;
+            m_dragOffset = QPointF(event->pos() - m_lastOverlayTextRect.topLeft());
+            setCursor(Qt::ClosedHandCursor);
+            return;
+        }
+        if (m_cameraSource > 0 && m_cameraPipMode && m_lastCameraPipRect.contains(event->pos())) {
+            m_dragTarget = DragTarget::CameraPip;
+            m_dragOffset = QPointF(event->pos() - m_lastCameraPipRect.topLeft());
+            setCursor(Qt::ClosedHandCursor);
+            return;
+        }
+    }
+    QWidget::mousePressEvent(event);
+}
+
+void MasterVideoWidget::mouseMoveEvent(QMouseEvent* event) {
+    if (m_dragTarget != DragTarget::None && width() > 0 && height() > 0) {
+        QPointF newTopLeft = QPointF(event->pos()) - m_dragOffset;
+        double normX = qBound(0.0, newTopLeft.x() / width(), 0.90);
+        double normY = qBound(0.0, newTopLeft.y() / height(), 0.90);
+
+        if (m_dragTarget == DragTarget::LowerThird)       m_lowerThirdPos = QPointF(normX, normY);
+        else if (m_dragTarget == DragTarget::OverlayText) m_overlayTextPos = QPointF(normX, normY);
+        else if (m_dragTarget == DragTarget::CameraPip)   m_cameraPipPos = QPointF(normX, normY);
+
+        update();
+        return;
+    }
+    QWidget::mouseMoveEvent(event);
+}
+
+void MasterVideoWidget::mouseReleaseEvent(QMouseEvent* event) {
+    if (m_dragTarget != DragTarget::None) {
+        m_dragTarget = DragTarget::None;
+        setCursor(Qt::ArrowCursor);
+    }
+    QWidget::mouseReleaseEvent(event);
 }
