@@ -409,6 +409,17 @@ void MasterVideoWidget::buildQuickToolbar() {
     m_pBtnProjector = new QPushButton(QStringLiteral("PHOENIX OUT"), m_pToolbarContainer);
     m_pBtnProjector->setCheckable(true);
     m_pBtnProjector->setFocusPolicy(Qt::NoFocus);
+    m_pBtnRec = new QPushButton(QStringLiteral("● REC"), m_pToolbarContainer);
+        
+m_pBtnRec->setCheckable(true);
+m_pBtnRec->setStyleSheet(QStringLiteral(
+        "QPushButton:checked { background-color: #D00000; color: #FFFFFF; border-color: #FF4D4D; }"));
+row1->addWidget(m_pBtnRec, 1);
+
+connect(m_pBtnRec, &QPushButton::toggled, this, [this](bool checked) {
+    m_isRecording = checked;
+    update();
+});
 
     row1->addWidget(m_pTransitionDropdown, 3);
     row1->addWidget(m_pBtnFadeNow, 1);
