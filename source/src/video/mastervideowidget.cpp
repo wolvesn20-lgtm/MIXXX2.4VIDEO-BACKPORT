@@ -111,16 +111,13 @@ MasterVideoWidget::MasterVideoWidget(QWidget* parent)
 
     buildQuickToolbar();
 
-    QTimer* pRefreshTimer = new QTimer(this);
+        QTimer* pRefreshTimer = new QTimer(this);
     connect(pRefreshTimer, &QTimer::timeout, this, [this]() {
         m_rgbPhase = (m_rgbPhase + 6) % 360;
 
         if (m_pTransitionControl) {
-            int modeVal = qBound(0, static_cast<int>(m_pTransitionControl->get()), 4);
+            int modeVal = qBound(0, static_cast<int>(m_pTransitionControl->get()), 7);
             m_transition = static_cast<TransitionMode>(modeVal);
-                int modeVal = qBound(0, static_cast<int>(m_pTransitionControl->get()), 7);
-// and inside beatHit:
-int nextMode = QRandomGenerator::global()->bounded(8);
         }
         if (m_pUpfaderPreviewControl) {
             bool wantPreview = m_pUpfaderPreviewControl->get() > 0.5;
@@ -158,11 +155,21 @@ int nextMode = QRandomGenerator::global()->bounded(8);
                            (m_pBeatActive2 && m_pBeatActive2->get() > 0.5);
             static bool prevBeat = false;
             if (beatHit && !prevBeat) {
-                int nextMode = QRandomGenerator::global()->bounded(5);
+                int nextMode = QRandomGenerator::global()->bounded(8);
                 setTransitionMode(static_cast<TransitionMode>(nextMode));
             }
             prevBeat = beatHit;
         }
+
+        syncToolbarStates();
+        update();
+        if (m_pProjectorWindow && m_pProjectorWindow->isVisible()) {
+            m_pProjectorWindow->update();
+        }
+    });
+    pRefreshTimer->start(33);
+}
+
 
         if (m_autoFadeActive && m_pCrossfader) {
             m_autoFadeProgress += 0.03;
