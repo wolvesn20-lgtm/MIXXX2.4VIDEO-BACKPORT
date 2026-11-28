@@ -149,7 +149,6 @@ MasterVideoWidget::MasterVideoWidget(QWidget* parent)
         if (m_pRgbSplashControl) {
             m_rgbSplashEnabled = m_pRgbSplashControl->get() > 0.5;
         }
-
         if (m_beatSyncEnabled && m_randomTransition) {
             bool beatHit = (m_pBeatActive1 && m_pBeatActive1->get() > 0.5) ||
                            (m_pBeatActive2 && m_pBeatActive2->get() > 0.5);
@@ -161,16 +160,6 @@ MasterVideoWidget::MasterVideoWidget(QWidget* parent)
             prevBeat = beatHit;
         }
 
-        syncToolbarStates();
-        update();
-        if (m_pProjectorWindow && m_pProjectorWindow->isVisible()) {
-            m_pProjectorWindow->update();
-        }
-    });
-    pRefreshTimer->start(33);
-}
-
-
         if (m_autoFadeActive && m_pCrossfader) {
             m_autoFadeProgress += 0.03;
             if (m_autoFadeProgress >= 1.0) {
@@ -180,6 +169,16 @@ MasterVideoWidget::MasterVideoWidget(QWidget* parent)
             double nextXfader = m_autoFadeStart + (m_autoFadeTarget - m_autoFadeStart) * m_autoFadeProgress;
             m_pCrossfader->set(nextXfader);
         }
+
+        syncToolbarStates();
+        update();
+        if (m_pProjectorWindow && m_pProjectorWindow->isVisible()) {
+            m_pProjectorWindow->update();
+        }
+    });
+    pRefreshTimer->start(33);
+}
+
 void MasterVideoWidget::setupUniqueButtonContextMenus() {
     auto bindMenu = [](QWidget* w, std::function<void(QMenu&)> builder) {
         if (!w) return;
@@ -190,8 +189,6 @@ void MasterVideoWidget::setupUniqueButtonContextMenus() {
             menu.exec(w->mapToGlobal(pos));
         });
     };
-
-    // 1. LOWER 3RD Right-Click Menu (Styles, Presets, Font, Scale, Color, Position)
     bindMenu(m_pBtnLowerThird, [this](QMenu& menu) {
         menu.addAction(QStringLiteral("Edit Lower Third Text..."), this, &MasterVideoWidget::editLowerThirdText);
 
