@@ -13,6 +13,7 @@
 #include <QtGlobal>
 #include <QtMath>
 #include <QScreen>
+#include <QMouseEvent>
 
 ProjectorWindow::ProjectorWindow(MasterVideoWidget* pMaster, QWidget* parent)
         : QWidget(parent, Qt::Window),
