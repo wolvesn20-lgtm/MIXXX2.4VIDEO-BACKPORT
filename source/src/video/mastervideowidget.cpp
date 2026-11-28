@@ -1070,8 +1070,6 @@ void MasterVideoWidget::renderRgbSplashLayer(QPainter& painter, const QRect& tar
 
     painter.restore();
   }
-
-}
     if (!isProjectorOutput && m_cueTransition) {
         painter.save();
         painter.setPen(Qt::NoPen);
